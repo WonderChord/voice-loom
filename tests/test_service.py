@@ -262,9 +262,14 @@ class ServiceTests(unittest.TestCase):
         config.update(context_limit=3, persona="录音人的性格", prompt="措辞规则", speech_prompt="耳语表演规则", appearance={"mode": "light", "accent": "#aabbcc"})
         self.assertEqual(self.client.put("/api/config", json=config).status_code, 200)
         for number in range(3):
-            self.assertEqual(self.wait_record(self.submit(str(number)))["status"], "done")
+            self.assertEqual(self.wait_record(self.submit(str(number), preview=False))["status"], "done")
         calls = [c for c in self.providers.calls if c[0] == "llm"]
         self.assertEqual(len(calls[-1][2]), 3)
+        # 预览稿只试听，不进入上下文。
+        history = list(self.app.state.pipeline.history)
+        preview = self.wait_record(self.submit("只是预览"))
+        self.assertFalse(preview["context_member"])
+        self.assertEqual(self.app.state.pipeline.history, history)
         self.assertEqual(calls[-1][3]["speech_prompt"], "耳语表演规则")
         self.assertEqual(calls[-1][3]["persona"], "录音人的性格")
         config["context_limit"] = 0
@@ -406,6 +411,31 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(record["status"], "skipped")
         self.assertEqual(self.providers.calls, [])
         self.assertEqual(self.app.state.pipeline.history, [])
+
+    def test_processed_input_audio_is_removed_and_full_queue_drop_is_reported(self):
+        self.client.post("/api/references", files={"file": ("voice.wav", wav_bytes())},
+                         data={"transcript": "参考台词"})
+        runs = self.app.state.store.runs
+        response = self.client.post("/api/process/audio", files={"file": ("voice.wav", wav_bytes())})
+        record = self.wait_record(response.json()["id"])
+        self.assertEqual(record["status"], "done")
+        # 上传的输入音频处理后删除，只留下合成结果。
+        self.assertEqual(sorted(p.name for p in runs.glob("*.wav")), [record["id"] + ".wav"])
+        self.providers.block = True
+        self.assertEqual(self.client.post("/api/listen/start").status_code, 200)
+        first = self.submit("阻塞中", preview=False)
+        self.assertTrue(self.providers.entered.wait(2))
+        for number in range(3):
+            self.submit(str(number), preview=False)
+        before = set(runs.glob("*_input.wav"))
+        self.app.state.pipeline.audio.on_segment(np.full((16000, 1), .1), 16000)
+        state = self.client.get("/api/state").json()
+        self.assertEqual(state["dropped_audio_count"], 1)
+        self.assertIn("队列已满", state["last_error"])
+        self.assertEqual(set(runs.glob("*_input.wav")), before)
+        self.client.post("/api/listen/stop")
+        self.providers.hold.set()
+        self.wait_record(first)
 
     def test_low_energy_reference_keeps_transcript_and_returns_friendly_reason(self):
         response = self.client.post("/api/references", files={"file": (

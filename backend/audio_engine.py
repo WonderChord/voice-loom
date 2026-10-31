@@ -53,8 +53,11 @@ def list_devices() -> dict:
                   "default_input": int(defaults[0]) if defaults[0] >= 0 else None,
                   "default_output": int(defaults[1]) if defaults[1] >= 0 else None}
         for index, device in enumerate(devices):
+            hostapi = hostapis[device["hostapi"]]["name"]
             entry = {"id": index, "name": device["name"],
-                     "hostapi": hostapis[device["hostapi"]]["name"],
+                     "hostapi": hostapi,
+                     # WDM-KS 不经 Windows 混音器，独占和多设备切换时容易报 -9999。
+                     "unstable": "WDM-KS" in hostapi,
                      "sample_rate": float(device["default_samplerate"])}
             if device["max_input_channels"] > 0:
                 result["inputs"].append(entry.copy())

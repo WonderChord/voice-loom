@@ -130,5 +130,21 @@ class MCPTests(unittest.TestCase):
             self.assertFalse(out['audit_enabled'])
         self.run_client(check)
 
+    def test_mcp_ambiguous_match_and_provider_edits_are_refused(self):
+        async def check(client, bridge):
+            # 「drama」同时命中云端与两个本机 Drama3，必须拒绝而不是随手选第一个。
+            before = json.loads(json.dumps(bridge.config))
+            ambiguous = await client.call_tool('set_defaults', {'tts': 'drama'})
+            self.assertTrue(ambiguous.is_error)
+            self.assertIn('多个匹配', ambiguous.content[0].text)
+            self.assertEqual(bridge.config, before)
+            exact = await client.call_tool('set_defaults', {'tts': 'drama3-local'})
+            self.assertFalse(exact.is_error)
+            self.assertEqual(exact.structured_content['active']['tts'], 'drama3-local')
+            # 改服务地址会把已保存的密钥发往新地址，只能在模型连接页操作。
+            moved = await client.call_tool('update_settings', {'changes': {'providers': []}})
+            self.assertTrue(moved.is_error)
+        self.run_client(check)
+
 
 if __name__=='__main__': unittest.main()

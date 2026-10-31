@@ -135,9 +135,15 @@ def healthy(base_url: str, name: str | None = None) -> bool:
         return False
 
 
+def sense_python() -> Path:
+    """SenseVoice 使用的独立 Torch/FunASR 环境，可用 VOICE_LOOM_MODEL_PYTHON 覆盖。"""
+    override = os.environ.get("VOICE_LOOM_MODEL_PYTHON", "").strip().strip('"')
+    return Path(override) if override else Path("G:/AI/seedvc/venv/Scripts/python.exe")
+
+
 def available(name: str) -> bool:
     if name == "sensevoice":
-        return (SENSE_MODEL / "am.mvn").is_file() and SENSE_PACKAGES.is_dir()
+        return (SENSE_MODEL / "am.mvn").is_file() and SENSE_PACKAGES.is_dir() and sense_python().is_file()
     spec = RUNTIMES.get(name)
     if spec is None:
         return False
@@ -498,4 +504,6 @@ def _ensure_runtime(name: str, target: str, timeout: float, cancel_check, manage
             if child is not None and child.poll() is not None:
                 raise LocalRuntimeError("本地模型进程已退出，请查看 data/logs 中的模型日志。")
             time.sleep(0.3)
+        if listening and not registered_running and (existing is None or existing.poll() is not None):
+            raise LocalRuntimeError(f"端口 {spec['port']} 被其他程序占用，健康检查不通过；请关闭占用该端口的程序或修改部署端口。")
     raise LocalRuntimeError("本地模型仍未就绪，请查看 data/logs 中的模型日志。")

@@ -57,7 +57,7 @@ def transcribe(samples, options, cancel_check=None):
             if _child is None or _child.poll() is not None:
                 started = time.time()
                 note(local_runtime.LOG_DIR, 'sensevoice', 'launching', '正在加载 SenseVoice CPU 模型', started=started)
-                python = Path(os.environ.get("VOICE_LOOM_MODEL_PYTHON") or "G:/AI/seedvc/venv/Scripts/python.exe")
+                python = local_runtime.sense_python()
                 if not python.is_file() or not local_runtime.available("sensevoice"):
                     raise RuntimeError("SenseVoice模型环境未配置，请设置模型Python路径或选择Qwen识别")
                 worker = Path(__file__).with_name("sensevoice_worker.py")

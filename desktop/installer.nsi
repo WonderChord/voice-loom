@@ -28,7 +28,7 @@ Section "声织" MainSection
     CreateShortcut "$DESKTOP\声织.lnk" "$INSTDIR\声织.exe"
     WriteRegStr HKCU "Software\VoiceLoom" "InstallDir" "$INSTDIR"
     WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\VoiceLoom" "DisplayName" "声织 Voice Loom"
-    WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\VoiceLoom" "DisplayVersion" "1.2.0"
+    WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\VoiceLoom" "DisplayVersion" "1.2.1"
     WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\VoiceLoom" "DisplayIcon" "$INSTDIR\声织.exe"
     WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\VoiceLoom" "UninstallString" '$\"$INSTDIR\Uninstall.exe$\"'
     WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\VoiceLoom" "NoModify" 1

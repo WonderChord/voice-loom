@@ -867,6 +867,7 @@ export function DevicesPage({
                 {devices[k === "input" ? "inputs" : "outputs"].map((d) => (
                   <option value={d.id} key={d.id}>
                     {d.name} · {d.hostapi}
+                    {d.unstable ? "（不稳定）" : ""}
                   </option>
                 ))}
               </select>

@@ -118,7 +118,7 @@ def python_runtime():
         if not candidate.is_file():
             raise LaunchError("VOICE_LOOM_PYTHON 指定的 Python 不存在，请检查该路径")
         return candidate.resolve()
-    candidates = [KNOWN_PYTHON, ROOT / ".venv" / "Scripts" / "python.exe", Path(sys.executable)]
+    candidates = [ROOT / ".venv" / "Scripts" / "python.exe", KNOWN_PYTHON, Path(sys.executable)]
     for candidate in candidates:
         if candidate.is_file():
             if candidate.name.lower() == "pythonw.exe" and candidate.with_name("python.exe").is_file():

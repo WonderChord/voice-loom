@@ -496,6 +496,12 @@ def _resolve_audit_provider(provider: dict, config: dict) -> dict:
     return provider
 
 
+def _audit_selected(config: dict) -> bool:
+    """只有显式指定了自检 LLM 才发起独立自检请求，否则只做本地复核。"""
+    active = config.get("active") or {}
+    return isinstance(active, dict) and bool(str(active.get("audit_llm") or "").strip())
+
+
 def _llm_ready(provider: dict) -> bool:
     if not isinstance(provider, dict) or provider.get("type") != "openai_llm" or not str(provider.get("model") or "").strip():
         return False
@@ -520,6 +526,18 @@ def _begin_audit(plan: dict, config: dict, message: str) -> None:
         cancel_check()
 
 
+def _local_review(plan: dict, config: dict, message: str) -> dict:
+    """本地正则复核：不联网，只确认朗读正文没有漏入控制指令。"""
+    _begin_audit(plan, config, message)
+    if _local_plan_audit(plan):
+        return _hold(plan, "本地复核发现正文含操作指令，请将它们移入控制指令后再合成。")
+    if plan["needs_review"]:
+        return _hold(plan, "候选稿包含待确认的语气控制指令，请确认后再合成。")
+    plan["needs_review"] = False
+    plan["audit"] = {"passed": True, "message": message}
+    return plan
+
+
 def _run_llm_audit(
     audit_provider: dict,
     text: str,
@@ -535,6 +553,7 @@ def _run_llm_audit(
     target_language: str,
     translating: bool,
     tts_context: dict | None,
+    fallback_local: bool = False,
 ) -> dict:
     if audit_provider.get("type") != "openai_llm" or not audit_provider.get("model"):
         raise ProviderError("请先配置自检 LLM 的服务地址和模型。")
@@ -585,6 +604,8 @@ def _run_llm_audit(
                 or any(not isinstance(x, str) for x in audit["leaked_instructions"])):
             raise ValueError
     except (ProviderError, ValueError, TypeError):
+        if fallback_local:
+            return _local_review(plan, config, "独立自检服务未响应，已退回本地指令复核；如需 LLM 复核请检查自检服务后重试。")
         return _hold(plan, "独立自检未完成，稿件已保留；请检查服务后重试或人工审阅。")
     local_leaks = _local_plan_audit(plan)
     if local_leaks:
@@ -613,7 +634,7 @@ def rewrite(provider: dict, text: str, history: list[dict], config: dict) -> dic
             {"kind": "speech", "text": part, "emotion": "neutral", "intensity": 0.0} for part in chunks],
             "warnings": ["LLM 微改写已关闭，当前直接合成原文。"],
             "audit": {"passed": True, "message": "直通模式：已完成本地指令复核。"}})
-        if audit_enabled and _llm_ready(audit_provider):
+        if audit_enabled and _audit_selected(config) and _llm_ready(audit_provider):
             return _run_llm_audit(
                 audit_provider,
                 text,
@@ -628,13 +649,9 @@ def rewrite(provider: dict, text: str, history: list[dict], config: dict) -> dic
                 target_language=target_language,
                 translating=False,
                 tts_context=_active_tts_context(config),
+                fallback_local=True,
             )
-        _begin_audit(direct, config, "直通模式：正在进行本地指令复核。")
-        leaked = _local_plan_audit(direct)
-        if leaked:
-            return _hold(direct, "检测到可能被念出的操作指令，请启用 LLM 拆分指令或编辑表演稿。")
-        direct["audit"] = {"passed": True, "message": "直通模式：已完成本地指令复核。"}
-        return direct
+        return _local_review(direct, config, "直通模式：已完成本地指令复核。")
     if provider.get("type") != "openai_llm" or not provider.get("model"):
         raise ProviderError("请先配置本地或云端 LLM 的服务地址和模型。")
     limit = config.get("context_limit", 0)

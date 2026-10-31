@@ -100,7 +100,7 @@ class Workstation:
 
 def create_server(settings, workstation=None):
     bridge = workstation or Workstation(settings)
-    server = MCPServer('voice-loom', title='声织', version='1.2.0',
+    server = MCPServer('voice-loom', title='声织', version='1.2.1',
         instructions='先查询状态和配置，再执行用户要求的操作。合成默认只保存文件，播放和开启麦克风使用独立工具。'
                      '需要确认的表演稿先展示给用户；调用确认合成工具须有用户确认。用户数据保存在本机数据目录。', log_level='WARNING')
     read = ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=False)
@@ -124,12 +124,12 @@ def create_server(settings, workstation=None):
 
     @server.tool(annotations=write)
     def update_settings(changes: dict) -> dict[str, Any]:
-        """修改工作台设置。changes 支持 active、default_asr、target_language、rewrite_enabled、audit_enabled、allow_events、emotion_intensity、persona、prompt、speech_prompt、style_strength、active_style_preset、style_presets、context_limit、audio、subtitles、appearance、providers；对象字段按键合并。"""
+        """修改工作台设置。changes 支持 active、default_asr、target_language、rewrite_enabled、audit_enabled、allow_events、emotion_intensity、persona、prompt、speech_prompt、style_strength、active_style_preset、style_presets、context_limit、audio、subtitles、appearance；对象字段按键合并。模型的地址与密钥请在模型连接页修改。"""
         allowed = {
             'active', 'default_asr', 'target_language', 'rewrite_enabled', 'audit_enabled',
             'allow_events', 'emotion_intensity', 'persona', 'prompt', 'speech_prompt',
             'style_strength', 'active_style_preset', 'style_presets', 'context_limit',
-            'audio', 'subtitles', 'appearance', 'providers',
+            'audio', 'subtitles', 'appearance',
         }
         if not changes or set(changes)-allowed:
             raise ToolError('请选择工具说明中列出的设置字段')
@@ -254,8 +254,11 @@ def create_server(settings, workstation=None):
             if exact:
                 return exact[0]
             partial = [p for p in candidates if q in p['id'].lower() or q in p['name'].lower() or q in p['type'].lower() or q in str(p.get('model', '')).lower()]
-            if partial:
+            if len(partial) == 1:
                 return partial[0]
+            if partial:
+                names = '、'.join(f"{p['id']}（{p['name']}）" for p in partial)
+                raise ToolError(f'{kind_name.upper()} 有多个匹配：{names}；请改用完整 ID')
             raise ToolError(f'未找到匹配的 {kind_name.upper()} 模型：{query}')
 
         if reference.strip():
@@ -265,6 +268,9 @@ def create_server(settings, workstation=None):
             partial = exact or [v for v in voices if q in v['name'].lower() or q in v['id'].lower()]
             if not partial:
                 raise ToolError(f'未找到匹配的参考音色：{reference}')
+            if len(partial) > 1:
+                names = '、'.join(f"{v['id']}（{v['name']}）" for v in partial)
+                raise ToolError(f'参考音色有多个匹配：{names}；请改用完整 ID')
             chosen = partial[0]
             config['active']['reference'] = chosen['id']
             updated['reference'] = {'id': chosen['id'], 'name': chosen['name']}

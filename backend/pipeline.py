@@ -121,6 +121,7 @@ class Pipeline:
         self.last_audio_error = ""
         self.skipped_audio_count = 0
         self.last_skip_reason = ""
+        self.dropped_audio_count = 0
         self.logs = deque(maxlen=200)
         self.logs_revision = 1
         self.history: list[dict] = []
@@ -135,7 +136,7 @@ class Pipeline:
                 self._remember(record.get("source_text", ""), record.get("text", ""))
         for warning in store.startup_warnings:
             self.log("warning", warning)
-        self.log("info", "工作台就绪，监听尚未开始。保持原语言且关闭角色润色时使用原文直通。")
+        self.log("info", "工作台就绪，监听尚未开始。保持原语言且关闭角色润色时使用原文直通，直通只做本地指令复核。")
 
     def start_worker(self):
         with self.lock:
@@ -213,6 +214,7 @@ class Pipeline:
                 "last_error": self.last_error,
                 "skipped_audio_count": self.skipped_audio_count,
                 "last_skip_reason": self.last_skip_reason,
+                "dropped_audio_count": self.dropped_audio_count,
                 "uptime_s": round(time.monotonic() - self.started, 1),
             }
             if records is not None:
@@ -384,6 +386,12 @@ class Pipeline:
             with self.lock:
                 if not self.listening:
                     return
+                if len(self.jobs) >= 3:
+                    # 队列已满时丢弃并明确告知，避免语音静默丢失。
+                    self.dropped_audio_count += 1
+                    self.last_error = "等待队列已满（3 条），这一段语音未能处理"
+                    self.log("warning", self.last_error)
+                    return
                 self._check_capacity()
                 if len(audio) == 0:
                     return
@@ -532,8 +540,10 @@ class Pipeline:
                 self._play(job, path)
         with self.lock:
             self._guard(job)
-            self.store.update_record(job.id, status="done", source_text=source, text=plan["text"], plan=plan, audio_url=audio_url, context_member=True, elapsed_ms=round((time.monotonic() - job.started) * 1000))
-            self._remember(source, plan["text"])
+            # 预览稿只用于试听，不进入对话上下文，避免影响后续改写。
+            self.store.update_record(job.id, status="done", source_text=source, text=plan["text"], plan=plan, audio_url=audio_url, context_member=not job.preview, elapsed_ms=round((time.monotonic() - job.started) * 1000))
+            if not job.preview:
+                self._remember(source, plan["text"])
         self.log("info", "预览稿已生成" if job.preview else "语音任务已完成")
 
     def _passes_energy_gate(self, job):
@@ -591,6 +601,9 @@ class Pipeline:
                 if job.reference:
                     Path(job.reference["path"]).unlink(missing_ok=True)
                 if job.mode == "reference" and job.path:
+                    job.path.unlink(missing_ok=True)
+                elif job.mode == "process" and job.path:
+                    # 输入音频只在处理期间使用；转写文字与合成结果已保存，处理后删除避免 runs 无限增长。
                     job.path.unlink(missing_ok=True)
                 with self.lock:
                     if self.active is job:

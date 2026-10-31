@@ -69,6 +69,22 @@ class StylePresetTests(unittest.TestCase):
             self.assertEqual(saved["style_presets"], restored["style_presets"])
             self.assertEqual(Store(directory, seed_reference=False).config()["prompt"], legacy["prompt"])
 
+    def test_newer_config_fields_are_ignored_instead_of_blocking_startup(self):
+        # 新版写入的字段被旧版读到时不应让后台直接退出。
+        newer = Config().model_dump()
+        newer.update(future_switch=True, persona="保留的人设")
+        newer["active"]["future_role"] = "x"
+        newer["audio"]["future_gain"] = 3
+        newer["providers"][0]["future_option"] = 1
+        with tempfile.TemporaryDirectory() as directory:
+            (Path(directory) / "config.json").write_text(json.dumps(newer, ensure_ascii=False), encoding="utf-8")
+            restored = Store(directory, seed_reference=False).config()
+            self.assertEqual(restored["persona"], "保留的人设")
+            self.assertNotIn("future_switch", restored)
+            self.assertNotIn("future_role", restored["active"])
+            self.assertNotIn("future_gain", restored["audio"])
+            self.assertNotIn("future_option", restored["providers"][0])
+
     def test_duplicate_id_missing_active_and_invalid_strength_are_rejected(self):
         base = Config().model_dump()
         duplicate = copy.deepcopy(base)

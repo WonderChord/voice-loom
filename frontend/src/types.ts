@@ -184,11 +184,13 @@ export interface Runtime {
   uptime_s: number;
   skipped_audio_count?: number;
   last_skip_reason?: string | null;
+  dropped_audio_count?: number;
 }
 export interface Device {
   id: number;
   name: string;
   hostapi: string;
+  unstable?: boolean;
   sample_rate: number;
 }
 export interface Devices {

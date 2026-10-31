@@ -84,7 +84,7 @@ class Store:
         if (self.root / "config.json").exists():
             loaded = self._load("config.json")
             self._secrets = loaded.pop("_secrets", {})
-            self._config = Config.model_validate(loaded).model_dump()
+            self._config = Config.model_validate(self._prune_unknown(loaded)).model_dump()
         if (self.root / "references.json").exists():
             self._references = self._load("references.json")
         elif seed_reference:
@@ -107,6 +107,30 @@ class Store:
             return json.loads((self.root / name).read_text(encoding="utf-8"))
         except (ValueError, OSError) as exc:
             raise ValueError(f"{name} 无法读取，请保留文件并检查其内容") from exc
+
+    @classmethod
+    def _prune_unknown(cls, value, model=Config):
+        """旧版程序读到新版配置时忽略不认识的字段，避免直接启动失败。"""
+        if not isinstance(value, dict):
+            return value
+        pruned = {}
+        for key, item in value.items():
+            field = model.model_fields.get(key)
+            if field is None:
+                continue
+            pruned[key] = cls._prune_field(item, field.annotation)
+        return pruned
+
+    @classmethod
+    def _prune_field(cls, value, annotation):
+        candidates = [annotation, *getattr(annotation, "__args__", ())]
+        inner = [arg for arg in candidates if isinstance(arg, type) and hasattr(arg, "model_fields")]
+        if inner:
+            if isinstance(value, list):
+                return [cls._prune_unknown(item, inner[0]) if isinstance(item, dict) else item for item in value]
+            if isinstance(value, dict):
+                return cls._prune_unknown(value, inner[0])
+        return value
 
     def _persist_config(self):
         atomic_json(self.root / "config.json", {**self._config, "_secrets": self._secrets})

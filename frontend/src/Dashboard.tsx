@@ -422,6 +422,11 @@ export function Dashboard({
                 <span title={runtime.last_skip_reason || ""}>
                   已跳过 {runtime.skipped_audio_count || 0} 段
                 </span>
+                {!!runtime.dropped_audio_count && (
+                  <span className="error-text">
+                    队列已满丢弃 {runtime.dropped_audio_count} 段
+                  </span>
+                )}
               </div>
             )}
           </section>

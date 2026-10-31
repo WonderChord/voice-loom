@@ -189,7 +189,7 @@ def create_app(data_dir: str | Path | None = None, *, providers=None, audio_fact
         from .sensevoice_client import close as close_sense_worker
         await run_in_threadpool(close_sense_worker)
 
-    app = FastAPI(title="声织 · 本机语音工作台", version="1.2.0", lifespan=lifespan, docs_url="/api/docs", openapi_url="/api/openapi.json", redoc_url=None)
+    app = FastAPI(title="声织 · 本机语音工作台", version="1.2.1", lifespan=lifespan, docs_url="/api/docs", openapi_url="/api/openapi.json", redoc_url=None)
     app.add_middleware(LocalOnlyMiddleware, access=access)
     app.state.store = store
     app.state.pipeline = pipeline
@@ -225,7 +225,7 @@ def create_app(data_dir: str | Path | None = None, *, providers=None, audio_fact
 
     @app.get("/api/health")
     def health(request: Request):
-        result = {"ok": True, "name": "声织", "version": "1.2.0", "security_version": 1, "listening": pipeline.listening}
+        result = {"ok": True, "name": "声织", "version": "1.2.1", "security_version": 1, "listening": pipeline.listening}
         proof = access.health_proof(request.query_params.get("challenge", ""))
         if proof:
             result["proof"] = proof
@@ -320,18 +320,6 @@ def create_app(data_dir: str | Path | None = None, *, providers=None, audio_fact
     @app.get("/api/capabilities")
     def capabilities():
         return {provider["id"]: pipeline.providers.capabilities(provider) for provider in store.config()["providers"]}
-
-    @app.get("/api/capabilities/{provider_id}")
-    def provider_capabilities(provider_id: str):
-        key = provider_id.strip().lower()
-        tts_providers = [p for p in store.config()["providers"] if p["kind"] == "tts"]
-        for p in tts_providers:
-            if p["id"].lower() == key or p["name"].lower() == key or p["type"].lower() == key:
-                return {"provider_id": p["id"], "name": p["name"], "type": p["type"], "model": p.get("model", ""), **pipeline.providers.capabilities(p)}
-        for p in tts_providers:
-            if key in p["id"].lower() or key in p["name"].lower() or key in p["type"].lower():
-                return {"provider_id": p["id"], "name": p["name"], "type": p["type"], "model": p.get("model", ""), **pipeline.providers.capabilities(p)}
-        raise HTTPException(404, "未找到对应的 TTS 模型")
 
     @app.get("/api/devices")
     def devices():

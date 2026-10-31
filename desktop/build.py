@@ -15,7 +15,7 @@ import requests
 
 ROOT = Path(__file__).resolve().parents[1]
 DESKTOP = ROOT / 'desktop'
-VERSION = '1.2.0'
+VERSION = '1.2.1'
 FLAGS = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
 SDK_VERSION = '1.0.4258.31'
 SDK_URL = f'https://api.nuget.org/v3-flatcontainer/microsoft.web.webview2/{SDK_VERSION}/microsoft.web.webview2.{SDK_VERSION}.nupkg'
@@ -119,6 +119,25 @@ def license_bundle(payload, sdk):
         'webview2_sdk': SDK_VERSION, 'frontend': json.loads((ROOT/'frontend/package-lock.json').read_text())}, ensure_ascii=False, indent=2), encoding='utf-8')
     (notices/'README.txt').write_text('第三方组件许可见各目录。WebView2 Runtime 与 .NET Framework 由微软单独分发。\nAI 模型和模型服务由用户独立部署，其权重及许可未纳入本包。\n', encoding='utf-8')
 
+def source_zip(output):
+    """按 .gitignore 过滤源码包，避免把用户数据、模型权重和验收私有目录打包进去。"""
+    if not shutil.which('git') or not (ROOT/'.git').exists():
+        print('skip source archive: git repository required')
+        return None
+    listing = subprocess.run(['git', '-c', 'core.quotepath=false', 'ls-files', '-z'], cwd=ROOT,
+                             check=True, capture_output=True)
+    files = [name for name in listing.stdout.decode('utf-8').split('\0') if name]
+    if not files:
+        print('skip source archive: no tracked files')
+        return None
+    archive = output/f'VoiceLoom-{VERSION}-Source.zip'
+    with zipfile.ZipFile(archive, 'w', zipfile.ZIP_DEFLATED, compresslevel=9) as bundle:
+        for name in files:
+            path = ROOT/name
+            if path.is_file():
+                bundle.write(path, f'voice-loom/{name}')
+    return archive
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--work', type=Path, default=DESKTOP/'.build')
@@ -193,8 +212,11 @@ def main():
             if path.is_file():
                 bundle.write(path, str(Path(portable.name)/path.relative_to(portable)))
     artifacts = [archive, installer]
+    source_archive = source_zip(output)
+    if source_archive:
+        artifacts.append(source_archive)
     (output/'SHA256SUMS.txt').write_text('\n'.join(checksum(path)+'  '+path.name for path in artifacts)+'\n', encoding='ascii')
-    print(json.dumps({'portable': str(archive), 'installer': str(installer), 'local_app': str(extracted_portable/'声织.exe')}, ensure_ascii=False))
+    print(json.dumps({'portable': str(archive), 'installer': str(installer), 'source': str(source_archive) if source_archive else None, 'local_app': str(extracted_portable/'声织.exe')}, ensure_ascii=False))
 
 if __name__ == '__main__':
     main()

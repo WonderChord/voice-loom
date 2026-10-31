@@ -80,10 +80,19 @@ class AuditCallbackTests(unittest.TestCase):
         self.assertIn("已关闭", result["audit"]["message"])
 
         request.reset_mock()
+        # 原文直通没有 LLM 生成，默认只做本地复核；只有显式指定自检 LLM 才发起独立自检。
+        direct_local = p.rewrite({"type": "openai_llm", "model": "audit-only-model"}, "我今天有点累。", [],
+                                 {"rewrite_enabled": False, "audit_enabled": True})
+        request.assert_not_called()
+        self.assertEqual(direct_local["text"], "我今天有点累。")
+        self.assertTrue(direct_local["audit"]["passed"])
+
+        request.reset_mock()
         request.return_value = response({"passed": True, "uncertain": False,
                                          "message": "直通自检通过", "leaked_instructions": []})
         direct_audited = p.rewrite({"type": "openai_llm", "model": "audit-only-model"}, "我今天有点累。", [],
-                                   {"rewrite_enabled": False, "audit_enabled": True})
+                                   {"rewrite_enabled": False, "audit_enabled": True,
+                                    "active": {"llm": "rewrite-model", "audit_llm": "audit-only-model"}})
         self.assertEqual(request.call_count, 1)
         self.assertEqual(direct_audited["text"], "我今天有点累。")
         self.assertTrue(direct_audited["audit"]["passed"])
