@@ -57,7 +57,7 @@ def validate_listening_config(config: dict, reference: dict | None) -> None:
             local = address.hostname in {"127.0.0.1", "localhost", "::1"}
             if address.scheme == "http" and not local:
                 raise ValueError(f"{label} 的云服务地址请使用 HTTPS")
-            if kind in {"qwen_local", "breeze"} and not local:
+            if kind == "qwen_local" and not local:
                 raise ValueError(f"{label} 请使用 localhost 或 127.0.0.1 本机地址")
             if kind in {"openai_asr", "openai_llm", "openai_tts"} and not local and not str(provider.get("api_key", "")).strip():
                 raise ValueError(f"{label} 缺少 API 密钥，请先在模型设置中保存")
@@ -69,9 +69,15 @@ def validate_listening_config(config: dict, reference: dict | None) -> None:
             if not str(voice or "").strip():
                 raise ValueError(f"{label} 缺少声音 ID，请填写声音 ID 或在参考音库绑定声音")
         if kind in {"breeze", "gptsovits", "drama3_local"}:
-            if not Path((reference or {}).get("path") or "").is_file():
-                raise ValueError(f"{label} 需要参考音频，请先从参考音库选择或导入")
-            if not str((reference or {}).get("transcript") or "").strip():
+            mappings = (reference or {}).get("provider_voice_ids") or {}
+            preset = str(mappings.get(provider["id"]) or mappings.get(kind) or "").strip()
+            remote = bool(base) and urlsplit(base).hostname not in {"127.0.0.1", "localhost", "::1"}
+            if not preset and kind == "gptsovits" and remote:
+                raise ValueError(f"{label} 是云端服务，请在参考语音里填写服务器上的参考音频路径")
+            # 云端预置音色只需名字；其余情况把本机参考音频上传给服务。
+            if not preset and not Path((reference or {}).get("path") or "").is_file():
+                raise ValueError(f"{label} 需要参考音频，请先从参考音库选择或导入，或填写云端预置音色名")
+            if (not preset or kind == "gptsovits") and not str((reference or {}).get("transcript") or "").strip():
                 raise ValueError("参考语音缺少对应台词，请先识别或填写参考文字")
         if kind == "sensevoice":
             from . import local_runtime

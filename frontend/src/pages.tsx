@@ -35,6 +35,16 @@ import { EntryCard } from "./Dashboard";
 type Run = (fn: () => Promise<unknown>) => void;
 type Notify = (text: string, error?: boolean) => void;
 type Change = (patch: Partial<Config>) => void;
+// 参考语音在各 TTS 服务上的绑定：云端服务的音色 ID，或自部署服务启动时预置的音色。
+const VOICE_FIELDS: Record<string, [string, string]> = {
+  elevenlabs: ["音色 ID", "已在该服务创建的音色 ID；留空使用模型配置。"],
+  openai_tts: ["音色 ID", "已在该服务创建的音色 ID；留空使用模型配置。"],
+  fish_tts: ["音色 ID", "已在该服务创建的音色 ID；留空使用模型配置。"],
+  breeze: ["预置音色名", "服务端 --voices-dir 里已保存的音色名；留空则上传本条参考音频（同一实例只传一次）。"],
+  drama3_local: ["预置音色名", "服务端 voice_presets 或 voice_dir 里的音色名；留空则随请求内联本条参考音频。"],
+  gptsovits: ["服务器参考音频路径", "云端实例上的参考音频路径，参考文字取本条；本机服务可留空。"],
+};
+
 export function VoicesPage({
   config,
   voices,
@@ -309,12 +319,12 @@ export function VoicesPage({
             </select>
           </Field>
           {config.providers
-            .filter((p) => p.kind === "tts" && ["elevenlabs", "openai_tts", "fish_tts"].includes(p.type))
+            .filter((p) => p.kind === "tts" && p.type in VOICE_FIELDS)
             .map((p) => (
               <Field
                 key={p.id}
-                label={`${p.name} · 音色 ID`}
-                note="已在该服务创建的音色 ID；留空使用模型配置。"
+                label={`${p.name} · ${VOICE_FIELDS[p.type][0]}`}
+                note={VOICE_FIELDS[p.type][1]}
               >
                 <input
                   value={editing.provider_voice_ids[p.id] || ""}
@@ -395,12 +405,12 @@ const typeNames: Record<string, string> = {
   sensevoice: "SenseVoice 本机",
   openai_asr: "OpenAI 兼容 ASR",
   openai_llm: "OpenAI 兼容 LLM",
-  breeze: "Breeze 本机",
+  breeze: "Breeze-TTS（本机 / 自部署）",
   elevenlabs: "ElevenLabs 云端",
   openai_tts: "OpenAI 兼容 TTS",
   gptsovits: "GPT-SoVITS",
   fish_tts: "Fish Audio · Drama 3",
-  drama3_local: "Drama 3 · 本地推理",
+  drama3_local: "Drama 3 · audio.cpp（本机 / 自部署）",
 };
 export function ModelsPage({
   config,

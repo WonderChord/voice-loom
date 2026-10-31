@@ -40,6 +40,7 @@ _REAL_SESSION_CLASS = requests.Session
 _session_local = threading.local()
 _breeze_wav_cache_lock = threading.Lock()
 _breeze_wav_cache: dict[tuple[str, int, int], bytes] = {}
+_breeze_voice_ids: dict[tuple, str] = {}
 
 
 @contextmanager
@@ -62,6 +63,12 @@ def _http_session(loopback: bool):
 
 class ProviderError(Exception):
     """User-facing error deliberately excluding server bodies and credentials."""
+
+
+class ProviderHTTPError(ProviderError):
+    def __init__(self, message: str, status: int):
+        super().__init__(message)
+        self.status = status
 
 
 class ProviderReviewRequired(ProviderError):
@@ -94,7 +101,7 @@ def capabilities(provider: dict) -> dict:
     elif kind == "drama3_local":
         result.update(emotions=list(EMOTIONS), events=["sigh", "laugh"], whisper=True,
                       reference_audio=True, instructions=True)
-        result["notes"] = ["使用本地参考语音，耳语编译为成对标签。", "本地引擎使用默认语速，可通过独立停顿片段调整节奏。"]
+        result["notes"] = ["使用参考语音或服务端预置音色，耳语编译为成对标签。", "引擎使用默认语速，可通过独立停顿片段调整节奏。"]
     elif kind == "fish_tts":
         tagged = performance.is_tagged(provider)
         events = [event for event in EVENTS if performance.compile_event(provider, event)]
@@ -329,7 +336,8 @@ def _request(provider, method, path, **kwargs):
         meanings = {400: "请求参数不被服务接受", 401: "密钥无效或未填写", 402: "服务额度不足",
                     403: "服务拒绝访问", 404: "接口或模型不存在", 409: "本地模型正忙",
                     422: "请求字段校验失败", 429: "服务限流或额度不足", 503: "模型尚未就绪"}
-        raise ProviderError(f"{meanings.get(response.status_code, '模型服务返回错误')}（HTTP {response.status_code}）。")
+        raise ProviderHTTPError(f"{meanings.get(response.status_code, '模型服务返回错误')}（HTTP {response.status_code}）。",
+                                response.status_code)
     return response
 
 
@@ -896,7 +904,16 @@ def _reference_file(reference):
     return path, transcript
 
 
-def _breeze_voice(provider, reference, cancel_check=None):
+def _server_voice(provider, reference):
+    """服务端已预置的音色名（Breeze 的 .breeze、audio.cpp 的 voice_presets / voice_dir）。"""
+    mapping = (reference or {}).get("provider_voice_ids") or {}
+    return str(mapping.get(provider.get("id")) or mapping.get(provider.get("type")) or "").strip()
+
+
+def _breeze_voice(provider, reference, cancel_check=None, refresh=False):
+    preset = _server_voice(provider, reference)
+    if preset:
+        return preset
     path, transcript = _reference_file(reference)
     resolved = path.resolve()
     try:
@@ -904,6 +921,13 @@ def _breeze_voice(provider, reference, cancel_check=None):
         cache_key = (str(resolved), stat.st_mtime_ns, stat.st_size)
     except OSError:
         cache_key = None
+    # 同一服务、同一参考只注册一次；云端实例每句重传参考音频会白白增加延迟和流量。
+    id_key = (_base(provider), cache_key, transcript) if cache_key is not None else None
+    if id_key is not None and not refresh:
+        with _breeze_wav_cache_lock:
+            cached_id = _breeze_voice_ids.get(id_key)
+        if cached_id:
+            return cached_id
     wav_payload = None
     if cache_key is not None:
         with _breeze_wav_cache_lock:
@@ -922,7 +946,59 @@ def _breeze_voice(provider, reference, cancel_check=None):
                             files={"ref_audio": ("reference.wav", wav_payload, "audio/wav")}, cancel_check=cancel_check))
     if not isinstance(result.get("id"), str) or not result["id"]:
         raise ProviderError("Breeze 未返回有效音色编号。")
+    if id_key is not None:
+        with _breeze_wav_cache_lock:
+            if len(_breeze_voice_ids) >= 64:
+                _breeze_voice_ids.clear()
+            _breeze_voice_ids[id_key] = result["id"]
     return result["id"]
+
+
+def _forget_breeze_voice(provider, voice):
+    with _breeze_wav_cache_lock:
+        for key in [key for key, value in _breeze_voice_ids.items() if key[0] == _base(provider) and value == voice]:
+            _breeze_voice_ids.pop(key, None)
+
+
+def _drama3_reference(path):
+    samples, rate = _audio(path)
+    reference_wav = io.BytesIO()
+    sf.write(reference_wav, samples, rate, format="WAV", subtype="PCM_16")
+    content = reference_wav.getvalue()
+    if len(content) > 5 * 1024 * 1024:
+        raise ProviderError("Drama3 参考音频过大，请使用 3～15 秒的清晰语音。")
+    return content
+
+
+def _drama3_speech(provider, text, reference, preset, options, cancel_check):
+    """云端 / 预置音色走 /v1/audio/speech：预置音色只发名字，否则内联 base64 参考音频。"""
+    data = {"model": performance.model_id(provider) or "drama-3", "input": text, "response_format": "json",
+            "max_tokens": options.get("max_tokens", 1024), "seed": options.get("seed", 42)}
+    if preset:
+        # 参考文字随预置音色存在服务端（voice_presets.reference_text 或 voice_dir 的 prompt_text）。
+        data["voice"] = preset
+    else:
+        path, transcript = _reference_file(reference)
+        data["voice_ref"] = {"type": "base64", "data": base64.b64encode(_drama3_reference(path)).decode("ascii")}
+        data["reference_text"] = transcript
+    try:
+        response = _request(provider, "POST", "/v1/audio/speech", json=data, timeout=(5, 600), cancel_check=cancel_check)
+    except ProviderHTTPError as exc:
+        if preset and exc.status in {400, 404}:
+            raise ProviderError(f"Drama3 服务端未找到预置音色 {preset}，请检查 voice_presets 或 voice_dir。") from None
+        raise
+    try:
+        result = response.json()
+    except (ValueError, TypeError):
+        raise ProviderError("Drama3 返回了无效生成结果。") from None
+    encoded = result.get("audio") if isinstance(result, dict) else None
+    if not isinstance(encoded, str) or not encoded or len(encoded) > 140 * 1024 * 1024:
+        raise ProviderError("Drama3 返回空音频或音频过大。")
+    try:
+        audio = base64.b64decode(encoded, validate=True)
+    except (ValueError, TypeError):
+        raise ProviderError("Drama3 返回了无效音频编码。") from None
+    return _compact_drama3_silence(*_decode_audio(SimpleNamespace(content=audio)))
 
 
 def _speech(provider, text, emotion, intensity, reference, voice, delivery="normal", speed=1.0, cancel_check=None):
@@ -949,7 +1025,17 @@ def _speech(provider, text, emotion, intensity, reference, voice, delivery="norm
         for name in ("temperature", "top_p", "top_k", "repetition_penalty", "split_chars", "max_new_tokens"):
             if name in options:
                 data[name] = str(options[name])
-        response = _request(provider, "POST", "/v1/audio/speech", data=data, timeout=(5, 240), cancel_check=cancel_check)
+        try:
+            response = _request(provider, "POST", "/v1/audio/speech", data=data, timeout=(5, 240), cancel_check=cancel_check)
+        except ProviderHTTPError as exc:
+            if exc.status != 404:
+                raise
+            if _server_voice(provider, reference) == voice:
+                raise ProviderError(f"Breeze 服务端没有名为 {voice} 的预置音色，请检查 --voices-dir 或音色名。") from None
+            # 实例重启后内存里的临时音色会丢失，重新注册一次。
+            _forget_breeze_voice(provider, voice)
+            data["voice_id"] = _breeze_voice(provider, reference, cancel_check=cancel_check, refresh=True)
+            response = _request(provider, "POST", "/v1/audio/speech", data=data, timeout=(5, 240), cancel_check=cancel_check)
         return _decode_audio(response, raw_rate=response.headers.get("X-Sample-Rate", "24000"))
     if kind == "openai_tts":
         model = performance.model_id(provider)
@@ -994,7 +1080,17 @@ def _speech(provider, text, emotion, intensity, reference, voice, delivery="norm
             data["language"] = target_language
         return _decode_audio(_request(provider, "POST", "/v1/tts", json=data, cancel_check=cancel_check))
     if kind == "gptsovits":
-        path, transcript = _reference_file(reference)
+        preset = _server_voice(provider, reference)
+        if preset:
+            # 云端实例：填服务器上的参考音频路径，参考文字仍取自声织里的这条参考语音。
+            ref_path, transcript = preset, str((reference or {}).get("transcript") or "").strip()
+            if not transcript:
+                raise ProviderError("参考语音缺少对应文字，请先填写参考文字。")
+        elif not local_runtime.is_loopback(_base(provider)):
+            raise ProviderError("云端 GPT-SoVITS 需要在参考语音里填写服务器上的参考音频路径。")
+        else:
+            path, transcript = _reference_file(reference)
+            ref_path = str(path.resolve())
         variant = None
         if local_runtime.runtime_name(kind, _base(provider)) == "gptsovits_v5":
             variant = performance.model_id(provider) or "v5turbo"
@@ -1007,7 +1103,7 @@ def _speech(provider, text, emotion, intensity, reference, voice, delivery="norm
                          timeout=(5, 240), cancel_check=cancel_check)
         text_language = options.get("text_lang", "zh") if target_language == "original" else (
             "zh" if target_language == "zh_en" else target_language)
-        data = {"text": text, "text_lang": text_language, "ref_audio_path": str(path.resolve()),
+        data = {"text": text, "text_lang": text_language, "ref_audio_path": ref_path,
                 "prompt_text": transcript, "prompt_lang": (reference or {}).get("language") or "zh",
                 "media_type": "wav", "streaming_mode": False, "text_split_method": "cut5", "batch_size": 1}
         data["speed_factor"] = effective_speed * float(_number(options.get("speed_factor", 1.0), 0.25, 4, "语速系数"))
@@ -1020,15 +1116,11 @@ def _speech(provider, text, emotion, intensity, reference, voice, delivery="norm
                 data[name] = options[name]
         return _decode_audio(_request(provider, "POST", "/tts", json=data, timeout=(5, 240), cancel_check=cancel_check))
     if kind == "drama3_local":
-        if not local_runtime.is_loopback(_base(provider)):
-            raise ProviderError("本地 Drama3 请使用 localhost 或 127.0.0.1。")
+        preset = _server_voice(provider, reference)
+        if preset or not local_runtime.is_loopback(_base(provider)):
+            return _drama3_speech(provider, text, reference, preset, options, cancel_check)
         path, transcript = _reference_file(reference)
-        samples, rate = _audio(path)
-        reference_wav = io.BytesIO()
-        sf.write(reference_wav, samples, rate, format="WAV", subtype="PCM_16")
-        content = reference_wav.getvalue()
-        if len(content) > 5 * 1024 * 1024:
-            raise ProviderError("本地 Drama3 参考音频过大，请使用 3～15 秒的清晰语音。")
+        content = _drama3_reference(path)
         # Generic tasks expose the model's truncation flag. This native version
         # accepts reference WAV paths here; inline voice_ref is a speech-route feature.
         with tempfile.TemporaryDirectory(prefix="voice-loom-drama3-") as directory:
@@ -1136,17 +1228,15 @@ def synthesize(provider: dict, plan: dict, reference: dict | None, output_path: 
     if callable(cancel_check):
         cancel_check()
     tagged = performance.is_tagged(provider)
-    if kind == "breeze":
+    managed = kind in {"gptsovits", "drama3_local"} and local_runtime.runtime_name(kind, _base(provider))
+    # 启动本机模型前先确认参考语音可用；云端预置音色只需名字。
+    if (kind == "breeze" or managed) and not _server_voice(provider, reference):
         _reference_file(reference)
+    if kind == "breeze" or managed:
         _ensure(provider, cancel_check=cancel_check)
         if callable(cancel_check):
             cancel_check()
-        voice = _breeze_voice(provider, reference, cancel_check=cancel_check)
-    else:
-        if kind in {"gptsovits", "drama3_local"} and local_runtime.runtime_name(kind, _base(provider)):
-            _reference_file(reference)
-            _ensure(provider, cancel_check=cancel_check)
-        voice = _voice(provider, reference)
+    voice = _breeze_voice(provider, reference, cancel_check=cancel_check) if kind == "breeze" else _voice(provider, reference)
     parts = []
     pending = []
     pending_speed = 1.0
@@ -1247,7 +1337,7 @@ def test_provider(provider: dict) -> dict:
             if not isinstance(result.get("items"), list):
                 raise ProviderError("Fish 未返回有效的音色列表。")
             return {"ok": True, "message": "Fish 音色列表连接成功；未执行语音生成。"}
-        endpoint = "/openapi.json" if kind == "gptsovits" else "/v1/models"
+        endpoint = {"gptsovits": "/openapi.json", "breeze": "/health"}.get(kind, "/v1/models")
         response = _request(provider, "GET", endpoint, timeout=(5, 10))
         response.json()
         return {"ok": True, "message": "服务接口连接成功；未执行生成。"}

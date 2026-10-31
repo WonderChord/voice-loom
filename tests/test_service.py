@@ -419,7 +419,10 @@ class ServiceTests(unittest.TestCase):
         response = self.client.post("/api/process/audio", files={"file": ("voice.wav", wav_bytes())})
         record = self.wait_record(response.json()["id"])
         self.assertEqual(record["status"], "done")
-        # 上传的输入音频处理后删除，只留下合成结果。
+        # 上传的输入音频处理后删除，只留下合成结果（清理在记录标记完成之后执行）。
+        deadline = time.monotonic() + 4
+        while len(list(runs.glob("*.wav"))) > 1 and time.monotonic() < deadline:
+            time.sleep(0.01)
         self.assertEqual(sorted(p.name for p in runs.glob("*.wav")), [record["id"] + ".wav"])
         self.providers.block = True
         self.assertEqual(self.client.post("/api/listen/start").status_code, 200)

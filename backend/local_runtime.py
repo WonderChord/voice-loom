@@ -113,7 +113,8 @@ def runtime_name(kind: str, base_url: str) -> str | None:
         endpoint = base_url.rstrip('/').removesuffix('/v1') if spec.get('imported') else base_url.rstrip('/')
         if spec.get("kind", name) == kind and endpoint == spec["url"]:
             return name
-    if kind in RUNTIMES:
+    # 远程地址（云端实例）由用户自己部署，只按普通 HTTP 服务调用，不做启动管理。
+    if kind in RUNTIMES and is_loopback(base_url):
         return kind
     return None
 
