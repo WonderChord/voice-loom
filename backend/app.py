@@ -130,7 +130,7 @@ class LocalOnlyMiddleware:
                 self.upload_slots.release()
 
 
-async def save_audio(upload: UploadFile, directory: Path, max_seconds: int) -> tuple[Path, float]:
+async def save_audio(upload: UploadFile, directory: Path, max_seconds: int, name_suffix: str = "") -> tuple[Path, float]:
     suffix = Path(upload.filename or "").suffix.lower()
     if suffix not in (".wav", ".flac", ".ogg", ".mp3"):
         await upload.close()
@@ -152,7 +152,7 @@ async def save_audio(upload: UploadFile, directory: Path, max_seconds: int) -> t
                 raise ValueError("音频采样率或声道数量不受支持")
             if info.duration > max_seconds:
                 raise ValueError(f"此音频最长 {max_seconds} 秒")
-            path = directory / f"{uuid.uuid4().hex}.wav"
+            path = directory / f"{uuid.uuid4().hex}{name_suffix}.wav"
             count = 0
             stream.seek(0)
             try:
@@ -404,7 +404,7 @@ def create_app(data_dir: str | Path | None = None, *, providers=None, audio_fact
 
     @app.post("/api/process/audio")
     async def process_audio(file: UploadFile = File(...), preview_only: bool = Form(False), play_audio: bool | None = Form(None)):
-        path, duration = await save_audio(file, store.runs, 60)
+        path, duration = await save_audio(file, store.runs, 60, "_input")
         try:
             return {"id": pipeline.submit(path=path, origin="file", preview=preview_only, play_audio=play_audio)}
         except Exception:

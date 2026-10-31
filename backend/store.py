@@ -95,6 +95,9 @@ class Store:
                 if record.get("status") not in ("done", "review", "error", "cancelled", "skipped"):
                     record.update(status="cancelled", error="服务已重启，未完成任务已取消")
             self._save_records()
+        # 进程被强制结束时，任务专用的参考副本和输入录音来不及删除；启动时没有任务在跑，统一清掉。
+        for leftover in [*self.runs.glob("*_reference.wav"), *self.runs.glob("*_input.wav")]:
+            leftover.unlink(missing_ok=True)
         ids = {r["id"] for r in self._references}
         # The stored default is applied once at startup; live selections stay unchanged.
         self._config["active"]["asr"] = self._config["default_asr"]

@@ -437,6 +437,15 @@ class ServiceTests(unittest.TestCase):
         self.providers.hold.set()
         self.wait_record(first)
 
+    def test_restart_removes_task_temporaries_and_keeps_results(self):
+        runs = self.app.state.store.runs
+        kept = runs / "abc.wav"
+        kept.write_bytes(wav_bytes())
+        for name in ("abc_reference.wav", "abc_input.wav"):
+            (runs / name).write_bytes(wav_bytes())
+        Store(self.folder.name, seed_reference=False)
+        self.assertEqual(sorted(p.name for p in runs.glob("*.wav")), ["abc.wav"])
+
     def test_low_energy_reference_keeps_transcript_and_returns_friendly_reason(self):
         response = self.client.post("/api/references", files={"file": (
             "silent.wav", wav_bytes(np.zeros(16000)))}, data={"transcript": "已有参考台词"})
