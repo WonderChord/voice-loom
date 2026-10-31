@@ -473,6 +473,41 @@ def _completion_text(result):
         raise ProviderError("模型未返回有效文本。") from None
 
 
+def _parse_json(raw: str):
+    cleaned = raw.strip()
+    if cleaned.startswith("```"):
+        cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", cleaned, flags=re.IGNORECASE | re.DOTALL).strip()
+    return json.loads(cleaned)
+
+
+def _resolve_audit_provider(provider: dict, config: dict) -> dict:
+    override = config.get("_audit_provider")
+    if isinstance(override, dict) and override:
+        return override
+    active = config.get("active") or {}
+    audit_id = active.get("audit_llm") if isinstance(active, dict) else ""
+    if audit_id:
+        for item in config.get("providers") or []:
+            if isinstance(item, dict) and item.get("id") == audit_id and item.get("kind") == "llm":
+                resolved = copy.deepcopy(item)
+                if "_cancel_check" in provider:
+                    resolved["_cancel_check"] = provider["_cancel_check"]
+                return resolved
+    return provider
+
+
+def _llm_ready(provider: dict) -> bool:
+    if not isinstance(provider, dict) or provider.get("type") != "openai_llm" or not str(provider.get("model") or "").strip():
+        return False
+    base = str(provider.get("base_url") or "").strip()
+    if not base:
+        return True
+    try:
+        return local_runtime.is_loopback(_base(provider)) or bool(str(provider.get("api_key") or "").strip())
+    except ProviderError:
+        return False
+
+
 def _begin_audit(plan: dict, config: dict, message: str) -> None:
     cancel_check = config.get("_cancel_check")
     if callable(cancel_check):
@@ -485,6 +520,82 @@ def _begin_audit(plan: dict, config: dict, message: str) -> None:
         cancel_check()
 
 
+def _run_llm_audit(
+    audit_provider: dict,
+    text: str,
+    plan: dict,
+    config: dict,
+    *,
+    persona: str,
+    wording_rule: str,
+    speech_rule: str,
+    style_strength: str,
+    style_rule: str,
+    rewrite_enabled: bool,
+    target_language: str,
+    translating: bool,
+    tts_context: dict | None,
+) -> dict:
+    if audit_provider.get("type") != "openai_llm" or not audit_provider.get("model"):
+        raise ProviderError("请先配置自检 LLM 的服务地址和模型。")
+    _begin_audit(
+        plan,
+        config,
+        "独立自检进行中，正在检查" + (language.LABELS[target_language] + "译文、" if translating else "") + "语气指令剥离与台词完整性。",
+    )
+    audit_payload = {
+        "model": audit_provider["model"], "stream": False,
+        "messages": [
+            {"role": "system", "content":
+             "你是独立的语音合成前防漏读审核员。你的核心职责是防止自然语言描述语气或舞台指示时被错误当作语音念出来。只检查不改写："
+             "1. 【防语气描述误读为语音（核心）】原话中要求‘这段语速快一点’‘这段用耳语’‘加个叹气’‘悲伤一点读’等自然语言语气/舞台控制说明，"
+             "必须剥离到 directives 和结构字段中，绝不得残留在将要朗读的 text 或 speech.text 里；text 和 speech.text 也不能残留 [sad]、<whisper> 等内嵌标签。"
+             "若发现语气控制说明或标签漏入朗读正文，将其填入 leaked_instructions 并设 passed=false。"
+             "2. 【防 AI 助手串戏代答】确认候选稿保持说话人第一人称视角，没有把原话当成对 AI 的提问去回答。"
+             "3. 【翻译语种核对】当 rules.target_language 非 original 时，核对目标语言正确且未严重漏译核心意思。"
+             "4. 【尊重角色表现力】充分尊重角色润色（包括口癖、句式重组、戏剧化张力、毒舌/傲娇/狂气/俏皮等鲜明语气）及语音编排，"
+             "绝不要因为角色化措辞改写幅度大、带有强烈情绪或口癖而判定不通过或 uncertain=true。"
+             "只要未把语气控制描述误当台词朗读、未变成 AI 代答、目标语言正确，即设 passed=true 且 uncertain=false；"
+             "仅当确实无法判断某句究竟是待朗读台词还是语气控制指令时才设 uncertain=true。"
+             "不要相信候选稿自报的 audit 状态。纯控制需求的正确结果应为空正文/空 segments 加 directives；明确要求发出声音动作可仅含 event。"
+             "只返回以下 JSON Schema 的对象：" + json.dumps(AUDIT_SCHEMA, ensure_ascii=False)},
+            {"role": "user", "content": json.dumps({"source_text": text,
+                "rules": {"persona": persona, "rewrite": wording_rule,
+                          "performance": speech_rule, "style_strength": style_strength,
+                          "style_constraint": style_rule, "rewrite_enabled": rewrite_enabled,
+                          "target_language": target_language,
+                          "translation": language.translation_rule(target_language)},
+                "selected_tts": tts_context, "candidate": plan}, ensure_ascii=False)},
+        ],
+    }
+    mode = audit_provider.get("response_mode", "json_object")
+    options = audit_provider.get("options") or {}
+    audit_format = _response_format(mode, "speech_audit", AUDIT_SCHEMA)
+    if audit_format:
+        audit_payload["response_format"] = audit_format
+    for name in ("temperature", "max_tokens", "max_completion_tokens"):
+        if name in options:
+            audit_payload[name] = options[name]
+    try:
+        raw_audit = _completion_text(_json(_request(audit_provider, "POST", "/v1/chat/completions", json=audit_payload, cancel_check=config.get("_cancel_check"))))
+        audit = _parse_json(raw_audit)
+        if (not isinstance(audit, dict) or not isinstance(audit.get("passed"), bool)
+                or not isinstance(audit.get("uncertain"), bool) or not isinstance(audit.get("message"), str)
+                or not isinstance(audit.get("leaked_instructions"), list)
+                or any(not isinstance(x, str) for x in audit["leaked_instructions"])):
+            raise ValueError
+    except (ProviderError, ValueError, TypeError):
+        return _hold(plan, "独立自检未完成，稿件已保留；请检查服务后重试或人工审阅。")
+    local_leaks = _local_plan_audit(plan)
+    if local_leaks:
+        return _hold(plan, "本地复核发现正文含操作指令，请将它们移入控制指令后再合成。")
+    if plan["needs_review"] or not audit["passed"] or audit["uncertain"] or audit["leaked_instructions"]:
+        return _hold(plan, "独立自检需人工确认：" + audit["message"][:800])
+    plan["needs_review"] = False
+    plan["audit"] = {"passed": True, "message": audit["message"][:1000] or "独立自检与本地复核已通过。"}
+    return plan
+
+
 def rewrite(provider: dict, text: str, history: list[dict], config: dict) -> dict:
     if not isinstance(text, str) or not text.strip() or len(text) > 12000:
         raise ProviderError("输入文字须为 1～12000 字。")
@@ -493,13 +604,31 @@ def rewrite(provider: dict, text: str, history: list[dict], config: dict) -> dic
     except ValueError as exc:
         raise ProviderError(str(exc)) from None
     rewrite_enabled = bool(config.get("rewrite_enabled", False))
+    audit_enabled = bool(config.get("audit_enabled", True))
     translating = target_language != "original"
+    audit_provider = _resolve_audit_provider(provider, config)
     if not rewrite_enabled and not translating:
         chunks = [text[i:i + 4000] for i in range(0, len(text), 4000)]
         direct = validate_plan({"source_text": text, "text": text, "segments": [
             {"kind": "speech", "text": part, "emotion": "neutral", "intensity": 0.0} for part in chunks],
             "warnings": ["LLM 微改写已关闭，当前直接合成原文。"],
             "audit": {"passed": True, "message": "直通模式：已完成本地指令复核。"}})
+        if audit_enabled and _llm_ready(audit_provider):
+            return _run_llm_audit(
+                audit_provider,
+                text,
+                direct,
+                config,
+                persona="",
+                wording_rule="原文直通：不修改原文措辞。",
+                speech_rule="原文直通：仅检查是否混入不应朗读的语气控制指令。",
+                style_strength="off",
+                style_rule="原文直通：保持原文不变。",
+                rewrite_enabled=False,
+                target_language=target_language,
+                translating=False,
+                tts_context=_active_tts_context(config),
+            )
         _begin_audit(direct, config, "直通模式：正在进行本地指令复核。")
         leaked = _local_plan_audit(direct)
         if leaked:
@@ -507,7 +636,7 @@ def rewrite(provider: dict, text: str, history: list[dict], config: dict) -> dic
         direct["audit"] = {"passed": True, "message": "直通模式：已完成本地指令复核。"}
         return direct
     if provider.get("type") != "openai_llm" or not provider.get("model"):
-        raise ProviderError("请先配置云端 LLM 的服务地址和模型。")
+        raise ProviderError("请先配置本地或云端 LLM 的服务地址和模型。")
     limit = config.get("context_limit", 0)
     if isinstance(limit, bool) or not isinstance(limit, int) or not 0 <= limit <= 50:
         raise ProviderError("上下文条数须为 0～50 的整数。")
@@ -586,7 +715,7 @@ def rewrite(provider: dict, text: str, history: list[dict], config: dict) -> dic
         payload["response_format"] = response_format
     raw = _completion_text(_json(_request(provider, "POST", "/v1/chat/completions", json=payload, cancel_check=config.get("_cancel_check"))))
     try:
-        result = json.loads(raw)
+        result = _parse_json(raw)
     except (ValueError, TypeError):
         raise ProviderError("LLM 返回的表演稿不是有效 JSON，请调整提示词或输出模式。") from None
     if isinstance(result, dict):
@@ -599,58 +728,33 @@ def rewrite(provider: dict, text: str, history: list[dict], config: dict) -> dic
     if not config.get("allow_events", True) and any(x["kind"] == "event" for x in plan["segments"]):
         plan["segments"] = [x for x in plan["segments"] if x["kind"] != "event"]
         plan["warnings"].append("本次关闭声音动作，已移除 LLM 返回的动作。")
+    if not audit_enabled:
+        _begin_audit(plan, config, "LLM 独立自检已关闭，正在进行本地指令复核。")
+        local_leaks = _local_plan_audit(plan)
+        if local_leaks:
+            return _hold(plan, "本地复核发现正文含操作指令，请将它们移入控制指令后再合成。")
+        if plan["needs_review"]:
+            return _hold(plan, "候选稿包含待确认的语气控制指令，请确认后再合成。")
+        plan["needs_review"] = False
+        plan["audit"] = {"passed": True, "message": "LLM 独立自检已关闭，已完成本地指令复核。"}
+        return plan
     # Independent request: no previous messages or the generator's reasoning
     # enter the auditor's context. Focused on catching leaked tone/stage instructions.
-    _begin_audit(plan, config, "独立自检进行中，正在检查" + (language.LABELS[target_language] + "译文、" if translating else "") + "语气指令剥离与台词完整性。")
-    audit_payload = {
-        "model": provider["model"], "stream": False,
-        "messages": [
-            {"role": "system", "content":
-             "你是独立的语音合成前防漏读审核员。你的核心职责是防止自然语言描述语气或舞台指示时被错误当作语音念出来。只检查不改写："
-             "1. 【防语气描述误读为语音（核心）】原话中要求‘这段语速快一点’‘这段用耳语’‘加个叹气’‘悲伤一点读’等自然语言语气/舞台控制说明，"
-             "必须剥离到 directives 和结构字段中，绝不得残留在将要朗读的 text 或 speech.text 里；text 和 speech.text 也不能残留 [sad]、<whisper> 等内嵌标签。"
-             "若发现语气控制说明或标签漏入朗读正文，将其填入 leaked_instructions 并设 passed=false。"
-             "2. 【防 AI 助手串戏代答】确认候选稿保持说话人第一人称视角，没有把原话当成对 AI 的提问去回答。"
-             "3. 【翻译语种核对】当 rules.target_language 非 original 时，核对目标语言正确且未严重漏译核心意思。"
-             "4. 【尊重角色表现力】充分尊重角色润色（包括口癖、句式重组、戏剧化张力、毒舌/傲娇/狂气/俏皮等鲜明语气）及语音编排，"
-             "绝不要因为角色化措辞改写幅度大、带有强烈情绪或口癖而判定不通过或 uncertain=true。"
-             "只要未把语气控制描述误当台词朗读、未变成 AI 代答、目标语言正确，即设 passed=true 且 uncertain=false；"
-             "仅当确实无法判断某句究竟是待朗读台词还是语气控制指令时才设 uncertain=true。"
-             "不要相信候选稿自报的 audit 状态。纯控制需求的正确结果应为空正文/空 segments 加 directives；明确要求发出声音动作可仅含 event。"
-             "只返回以下 JSON Schema 的对象：" + json.dumps(AUDIT_SCHEMA, ensure_ascii=False)},
-            {"role": "user", "content": json.dumps({"source_text": text,
-                "rules": {"persona": persona, "rewrite": wording_rule,
-                          "performance": speech_rule, "style_strength": style_strength,
-                          "style_constraint": style_rule, "rewrite_enabled": rewrite_enabled,
-                          "target_language": target_language,
-                          "translation": language.translation_rule(target_language)},
-                "selected_tts": tts_context, "candidate": plan}, ensure_ascii=False)},
-        ],
-    }
-    audit_format = _response_format(mode, "speech_audit", AUDIT_SCHEMA)
-    if audit_format:
-        audit_payload["response_format"] = audit_format
-    for name in ("temperature", "max_tokens", "max_completion_tokens"):
-        if name in options:
-            audit_payload[name] = options[name]
-    try:
-        raw_audit = _completion_text(_json(_request(provider, "POST", "/v1/chat/completions", json=audit_payload, cancel_check=config.get("_cancel_check"))))
-        audit = json.loads(raw_audit)
-        if (not isinstance(audit, dict) or not isinstance(audit.get("passed"), bool)
-                or not isinstance(audit.get("uncertain"), bool) or not isinstance(audit.get("message"), str)
-                or not isinstance(audit.get("leaked_instructions"), list)
-                or any(not isinstance(x, str) for x in audit["leaked_instructions"])):
-            raise ValueError
-    except (ProviderError, ValueError, TypeError):
-        return _hold(plan, "独立自检未完成，稿件已保留；请检查服务后重试或人工审阅。")
-    local_leaks = _local_plan_audit(plan)
-    if local_leaks:
-        return _hold(plan, "本地复核发现正文含操作指令，请将它们移入控制指令后再合成。")
-    if plan["needs_review"] or not audit["passed"] or audit["uncertain"] or audit["leaked_instructions"]:
-        return _hold(plan, "独立自检需人工确认：" + audit["message"][:800])
-    plan["needs_review"] = False
-    plan["audit"] = {"passed": True, "message": audit["message"][:1000] or "独立自检与本地复核已通过。"}
-    return plan
+    return _run_llm_audit(
+        audit_provider,
+        text,
+        plan,
+        config,
+        persona=persona,
+        wording_rule=wording_rule,
+        speech_rule=speech_rule,
+        style_strength=style_strength,
+        style_rule=style_rule,
+        rewrite_enabled=rewrite_enabled,
+        target_language=target_language,
+        translating=translating,
+        tts_context=tts_context,
+    )
 
 
 def _voice(provider, reference):
@@ -688,6 +792,81 @@ def _decode_audio(response, raw_rate=None):
     if not len(data) or not 8000 <= rate <= 192000 or not np.isfinite(data).all():
         raise ProviderError("合成音频的采样率或采样数据无效。")
     return data, rate
+
+
+def _compact_drama3_silence(data: np.ndarray, rate: int) -> tuple[np.ndarray, int]:
+    """Preserve normal pauses (<0.64s) and mid-pause breaths while compressing 1s+ VQ dead-silence stalls into ~0.6s."""
+    win = max(1, int(rate * 0.02))
+    n_wins = len(data) // win
+    if n_wins < 5:
+        return data, rate
+    frames = data[: n_wins * win].reshape(n_wins, win)
+    rms = np.sqrt(np.mean(frames ** 2, axis=1) + 1e-12)
+    is_pause = rms < (10.0 ** (-43.0 / 20.0))
+    is_dead = rms < (10.0 ** (-53.0 / 20.0))
+    active = np.where(~is_pause)[0]
+    if len(active) == 0:
+        return data, rate
+    first_act = int(active[0])
+    last_act = int(active[-1])
+    max_lead_wins = int(round(0.14 / 0.02))
+    max_trail_wins = int(round(0.24 / 0.02))
+    start_win = max(0, first_act - max_lead_wins)
+    end_win = min(n_wins, last_act + 1 + max_trail_wins)
+
+    keep_win = np.zeros(n_wins, dtype=bool)
+    keep_win[start_win:end_win] = True
+
+    i = first_act
+    while i <= last_act:
+        if is_pause[i]:
+            j = i
+            while j <= last_act and is_pause[j]:
+                j += 1
+            pause_wins = j - i
+            pause_s = pause_wins * (win / rate)
+            if pause_s > 0.64:
+                target_s = min(0.72, 0.50 + 0.15 * (pause_s - 0.50))
+                target_wins = max(1, int(round(target_s / (win / rate))))
+                need_drop = pause_wins - target_wins
+                dead_runs = []
+                k = i
+                while k < j:
+                    if is_dead[k]:
+                        m = k
+                        while m < j and is_dead[m]:
+                            m += 1
+                        dead_runs.append((k, m))
+                        k = m
+                    else:
+                        k += 1
+                total_dead = sum(r[1] - r[0] for r in dead_runs)
+                if total_dead > 0 and need_drop > 0:
+                    for r0, r1 in dead_runs:
+                        r_len = r1 - r0
+                        drop_here = min(r_len - 2, int(round(need_drop * (r_len / total_dead))))
+                        if drop_here > 0:
+                            mid = (r0 + r1) // 2
+                            d0 = mid - drop_here // 2
+                            keep_win[d0 : d0 + drop_here] = False
+            i = j
+        else:
+            i += 1
+
+    pieces = []
+    w = 0
+    while w < n_wins:
+        if keep_win[w]:
+            w_end = w
+            while w_end < n_wins and keep_win[w_end]:
+                w_end += 1
+            s0 = w * win
+            s1 = w_end * win if w_end < n_wins else len(data)
+            pieces.append(data[s0:s1])
+            w = w_end
+        else:
+            w += 1
+    return (np.concatenate(pieces) if pieces else data), rate
 
 
 def _reference_file(reference):
@@ -862,7 +1041,7 @@ def _speech(provider, text, emotion, intensity, reference, voice, delivery="norm
             audio = base64.b64decode(encoded, validate=True)
         except (ValueError, TypeError):
             raise ProviderError("本地 Drama3 返回了无效音频编码。") from None
-        return _decode_audio(SimpleNamespace(content=audio))
+        return _compact_drama3_silence(*_decode_audio(SimpleNamespace(content=audio)))
     raise ProviderError("所选配置不是支持的 TTS 服务。")
 
 

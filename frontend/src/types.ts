@@ -55,7 +55,7 @@ export interface StylePreset {
 }
 export interface Config {
   providers: Provider[];
-  active: { asr: string; llm: string; tts: string; reference: string };
+  active: { asr: string; llm: string; audit_llm?: string; tts: string; reference: string };
   default_asr: string;
   persona: string;
   prompt: string;
@@ -66,6 +66,7 @@ export interface Config {
   context_limit: number;
   target_language: TargetLanguage;
   rewrite_enabled: boolean;
+  audit_enabled?: boolean;
   allow_events: boolean;
   emotion_intensity: number;
   appearance: { accent: string; mode: "dark" | "light" };
@@ -128,6 +129,15 @@ export interface Plan {
   needs_review?: boolean;
   audit?: { passed: boolean; message: string };
 }
+export interface TagSpec {
+  mechanism: string;
+  whisper_tag: string | null;
+  emotion_tags: Record<string, string>;
+  event_tags: Record<string, string>;
+  pause_syntax: string;
+  speed_range: [number, number] | null;
+  plan_usage: string;
+}
 export interface Capabilities {
   emotions: string[];
   events: string[];
@@ -142,6 +152,7 @@ export interface Capabilities {
   default_rules: string;
   effective_rules: string;
   syntax_examples: string[];
+  tag_spec?: TagSpec;
 }
 export interface Entry {
   id: string;

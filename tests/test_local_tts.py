@@ -182,6 +182,19 @@ class LocalTtsTests(unittest.TestCase):
                           "你好", "neutral", 0, {"path": str(path), "transcript": "参考台词"}, None)
         request.assert_not_called()
 
+    def test_drama3_silence_compaction_keeps_natural_pause_and_trims_long_stall(self):
+        sr = 44100
+        speech = np.ones(int(sr * 0.5), dtype=np.float32) * 0.1
+        normal_pause = np.zeros(int(sr * 0.48), dtype=np.float32)
+        long_stall = np.zeros(int(sr * 1.60), dtype=np.float32)
+        long_tail = np.zeros(int(sr * 1.10), dtype=np.float32)
+        raw = np.concatenate([speech, normal_pause, speech, long_stall, speech, long_tail])
+        compacted, out_sr = p._compact_drama3_silence(raw, sr)
+        self.assertEqual(out_sr, sr)
+        dur = len(compacted) / sr
+        self.assertGreater(dur, 2.75)
+        self.assertLess(dur, 3.05)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -5,6 +5,8 @@ the syntax consumed by a particular synthesis model.
 """
 from __future__ import annotations
 
+import copy
+
 FISH_MODELS = {"drama-3", "s2-pro", "s2.1-pro", "s2.1-pro-free", "s1"}
 ELEVEN_TAG_MODELS = {"eleven_v3", "eleven_v4", "eleven_v4_turbo"}
 
@@ -46,6 +48,90 @@ PROFILES = {
     },
 }
 
+_INLINE_EMOTION_TAGS = {
+    "happy": "[happy]",
+    "sad": "[sad]",
+    "angry": "[angry]",
+    "calm": "[calm]",
+    "thoughtful": "[thoughtful]",
+    "excited": "[excited]",
+}
+
+_INSTRUCTION_EMOTIONS = {
+    "happy": "带着开心和轻快的语气说话。",
+    "sad": "带着难过和低落的语气说话。",
+    "angry": "带着生气和坚定的语气说话。",
+    "calm": "平静温和地说话。",
+    "thoughtful": "带着思考和斟酌的语气说话。",
+    "excited": "带着兴奋的语气说话。",
+}
+
+TAG_SPECS = {
+    "fish_drama3": {
+        "mechanism": "inline_tags",
+        "whisper_tag": "<whisper>{text}</whisper>",
+        "emotion_tags": dict(_INLINE_EMOTION_TAGS),
+        "event_tags": {"sigh": "[sighs]", "laugh": "[laughs]", "breath": "[breath]"},
+        "pause_syntax": "{\"kind\": \"pause\", \"duration_ms\": 1..10000}",
+        "speed_range": [0.5, 2.0],
+        "plan_usage": "在 plan.segments 中保持 speech.text 为纯台词，使用 delivery='whisper'、emotion、kind='event' 结构字段声明；适配器会自动编译为 <whisper>…</whisper>、[sad]、[sighs] 等 Drama 3 原生标签。",
+    },
+    "fish_drama3_local": {
+        "mechanism": "inline_tags",
+        "whisper_tag": "<whisper>{text}</whisper>",
+        "emotion_tags": dict(_INLINE_EMOTION_TAGS),
+        "event_tags": {"sigh": "[sighs]", "laugh": "[laughs]"},
+        "pause_syntax": "{\"kind\": \"pause\", \"duration_ms\": 1..10000}",
+        "speed_range": None,
+        "plan_usage": "在 plan.segments 中保持 speech.text 为纯台词，使用 delivery='whisper'、emotion、kind='event' 结构字段声明；本地适配器自动编译为 <whisper>…</whisper>、[sad]、[sighs]、[laughs] 原生标签。",
+    },
+    "fish_s2": {
+        "mechanism": "inline_tags",
+        "whisper_tag": "[whispering] {text}",
+        "emotion_tags": dict(_INLINE_EMOTION_TAGS),
+        "event_tags": {"sigh": "[sighing]", "laugh": "[laughing]"},
+        "pause_syntax": "{\"kind\": \"pause\", \"duration_ms\": 1..10000}",
+        "speed_range": [0.5, 2.0],
+        "plan_usage": "在 plan.segments 中使用 delivery='whisper'、emotion、kind='event' 结构字段，适配器自动编译为 [whispering]、[sighing]、[laughing] 等方括号标签。",
+    },
+    "eleven_audio_tags": {
+        "mechanism": "inline_tags",
+        "whisper_tag": "[whispers] {text}",
+        "emotion_tags": dict(_INLINE_EMOTION_TAGS),
+        "event_tags": {"sigh": "[sighs]", "laugh": "[laughs]", "breath": "[exhales]"},
+        "pause_syntax": "{\"kind\": \"pause\", \"duration_ms\": 1..10000}",
+        "speed_range": [0.7, 1.2],
+        "plan_usage": "在 plan.segments 中使用结构字段，适配器自动编译为 [whispers]、[sighs]、[laughs]、[exhales] 等标签。",
+    },
+    "breeze_instructions": {
+        "mechanism": "instruction_field",
+        "whisper_tag": "instruction: 用轻柔的耳语说话，声音贴近、低声而清晰。",
+        "emotion_tags": dict(_INSTRUCTION_EMOTIONS),
+        "event_tags": {},
+        "pause_syntax": "{\"kind\": \"pause\", \"duration_ms\": 1..10000}",
+        "speed_range": [0.25, 4.0],
+        "plan_usage": "通过独立 instruction 自然语言字段传递情绪、耳语和语速意图，speech.text 保持纯台词。",
+    },
+    "openai_instructions": {
+        "mechanism": "instruction_field",
+        "whisper_tag": "instructions: 用轻柔的耳语说话，声音贴近、低声而清晰。",
+        "emotion_tags": dict(_INSTRUCTION_EMOTIONS),
+        "event_tags": {},
+        "pause_syntax": "{\"kind\": \"pause\", \"duration_ms\": 1..10000}",
+        "speed_range": [0.25, 4.0],
+        "plan_usage": "通过独立 instructions 字段传递情绪与耳语描述，speech.text 保持纯台词。",
+    },
+    "plain": {
+        "mechanism": "reference_or_plain",
+        "whisper_tag": None,
+        "emotion_tags": {},
+        "event_tags": {},
+        "pause_syntax": "{\"kind\": \"pause\", \"duration_ms\": 1..10000}",
+        "speed_range": [0.25, 4.0],
+        "plan_usage": "仅发送纯文本与语速参数，音色与主语气由参考音频或基础音色决定。",
+    },
+}
+
 STYLE_RULES = {
     "off": "关闭角色措辞润色：保留原有表达，仅修正明显识别错误和标点并拆分控制指令。语音表演仍按独立表演规则处理。",
     "light": "轻微润色：保留原句骨架，顺畅口头语并微调语气词与节奏，让表达自然贴近人设。",
@@ -84,9 +170,11 @@ def describe_rules(provider: dict) -> dict:
     overrides = provider.get("performance_rules") or {}
     override = overrides.get(key, "") if isinstance(overrides, dict) else ""
     override = override.strip() if isinstance(override, str) else ""
+    spec = copy.deepcopy(TAG_SPECS[selected])
     return {"rule_profile": selected, "rule_title": profile["title"], "rule_key": key,
             "default_rules": profile["rules"], "effective_rules": override or profile["rules"],
-            "rules_customized": bool(override), "syntax_examples": list(profile["examples"])}
+            "rules_customized": bool(override), "syntax_examples": list(profile["examples"]),
+            "tag_spec": spec}
 
 
 def is_tagged(provider: dict) -> bool:

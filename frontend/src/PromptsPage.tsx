@@ -142,14 +142,20 @@ export function PromptsPage({ config, change, save, run, notify }: Props) {
           </div>
         </div>
         <Toggle
-          label="角色润色与语气补全"
+          label="角色润色与语气补全（LLM 优化）"
           note={
             translating
-              ? "开启后翻译并按角色风格润色；关闭后仅翻译，独立自检继续生效。"
+              ? "开启后翻译并按角色风格润色；关闭后仅翻译。"
               : "开启后按角色风格和当前 TTS 规则整理表达；关闭后原文直通。"
           }
           value={config.rewrite_enabled}
           onChange={(rewrite_enabled) => change({ rewrite_enabled })}
+        />
+        <Toggle
+          label="独立防漏读审核（LLM 自检）"
+          note="开启后使用独立 LLM 请求检查语气/舞台描述是否漏入朗读正文；关闭后仅执行本地正则复核。"
+          value={config.audit_enabled ?? true}
+          onChange={(audit_enabled) => change({ audit_enabled })}
         />
       </section>
       <div className="toolbar">
@@ -226,7 +232,18 @@ export function PromptsPage({ config, change, save, run, notify }: Props) {
         </div>
         {!!capability?.syntax_examples?.length && (
           <div className="rule-examples">
-            <small>合成时转换的标签示例</small>
+            <small>合成时转换的标签示例与标签规范</small>
+            {capability.tag_spec?.whisper_tag && (
+              <code>耳语标签：{capability.tag_spec.whisper_tag}</code>
+            )}
+            {capability.tag_spec && Object.keys(capability.tag_spec.event_tags).length > 0 && (
+              <code>
+                动作标签：
+                {Object.entries(capability.tag_spec.event_tags)
+                  .map(([k, v]) => `${k}=${v}`)
+                  .join("  ")}
+              </code>
+            )}
             {capability.syntax_examples.map((sample, i) => (
               <code key={i}>{sample}</code>
             ))}

@@ -58,6 +58,7 @@ class Provider(Model):
 class Active(Model):
     asr: str = "qwen"
     llm: str = "cloud-llm"
+    audit_llm: str = Field(default="", max_length=80)
     tts: str = "breeze"
     reference: str = ""
 
@@ -81,6 +82,7 @@ def default_providers() -> list[Provider]:
         ("sensevoice", "asr", "sensevoice", "SenseVoice · 本机", "", "", ""),
         ("cloud-asr", "asr", "openai_asr", "云端 ASR · OpenAI 兼容", "https://api.openai.com/v1", "gpt-4o-mini-transcribe", ""),
         ("cloud-llm", "llm", "openai_llm", "云端 LLM · OpenAI 兼容", "https://api.openai.com/v1", "gpt-4.1-mini", ""),
+        ("local-llm", "llm", "openai_llm", "本机 LLM · OpenAI 兼容", "http://127.0.0.1:11434/v1", "qwen2.5:7b", ""),
         ("breeze", "tts", "breeze", "Breeze · 本机", "http://127.0.0.1:7871", "", ""),
         ("elevenlabs", "tts", "elevenlabs", "ElevenLabs · 云端", "https://api.elevenlabs.io/v1", "eleven_v3", ""),
         ("cloud-tts", "tts", "openai_tts", "云端 TTS · OpenAI 兼容", "https://api.openai.com/v1", "gpt-4o-mini-tts", "alloy"),
@@ -92,8 +94,9 @@ def default_providers() -> list[Provider]:
         ("gptsovits-v5dev", "tts", "gptsovits", "GPT-SoVITS V5 Dev · 本机", "http://127.0.0.1:17864", "v5dev", ""),
     ]
     providers = [Provider(id=i, kind=k, type=t, name=n, base_url=u, model=m, voice=v) for i, k, t, n, u, m, v in values]
-    providers[4].options = {"cfg_scale": 2.0, "seed": 42}
-    providers[5].tag_style = "eleven"
+    by_id = {p.id: p for p in providers}
+    by_id["breeze"].options = {"cfg_scale": 2.0, "seed": 42}
+    by_id["elevenlabs"].tag_style = "eleven"
     return providers
 
 
@@ -156,6 +159,7 @@ class Config(Model):
     speech_prompt: str = Field(default="按台词情绪与戏剧张力自然编排语气、耳语、停顿与叹气/轻笑等声音表现。", max_length=16000)
     context_limit: int = Field(default=6, ge=0, le=50)
     rewrite_enabled: bool = False
+    audit_enabled: bool = True
     target_language: TargetLanguage = "original"
     allow_events: bool = True
     emotion_intensity: float = Field(default=0.6, ge=0, le=1)
@@ -175,6 +179,8 @@ class Config(Model):
             selected = getattr(self.active, kind)
             if selected not in lookup or lookup[selected].kind != kind:
                 raise ValueError(f"当前 {kind.upper()} 未指向对应服务")
+        if self.active.audit_llm and (self.active.audit_llm not in lookup or lookup[self.active.audit_llm].kind != "llm"):
+            raise ValueError("当前自检 LLM 未指向 LLM 服务")
         if self.default_asr not in lookup or lookup[self.default_asr].kind != "asr":
             raise ValueError("默认 ASR 未指向 ASR 服务")
         return self

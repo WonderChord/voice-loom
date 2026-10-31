@@ -321,6 +321,18 @@ def create_app(data_dir: str | Path | None = None, *, providers=None, audio_fact
     def capabilities():
         return {provider["id"]: pipeline.providers.capabilities(provider) for provider in store.config()["providers"]}
 
+    @app.get("/api/capabilities/{provider_id}")
+    def provider_capabilities(provider_id: str):
+        key = provider_id.strip().lower()
+        tts_providers = [p for p in store.config()["providers"] if p["kind"] == "tts"]
+        for p in tts_providers:
+            if p["id"].lower() == key or p["name"].lower() == key or p["type"].lower() == key:
+                return {"provider_id": p["id"], "name": p["name"], "type": p["type"], "model": p.get("model", ""), **pipeline.providers.capabilities(p)}
+        for p in tts_providers:
+            if key in p["id"].lower() or key in p["name"].lower() or key in p["type"].lower():
+                return {"provider_id": p["id"], "name": p["name"], "type": p["type"], "model": p.get("model", ""), **pipeline.providers.capabilities(p)}
+        raise HTTPException(404, "未找到对应的 TTS 模型")
+
     @app.get("/api/devices")
     def devices():
         try:

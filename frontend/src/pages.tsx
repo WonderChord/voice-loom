@@ -481,7 +481,10 @@ export function ModelsPage({
                 onClick={() => setSelected(p.id)}
               >
                 <span className="model-icon">
-                  {p.base_url.includes("127.0.0.1") || p.type === "sensevoice" ? (
+                  {p.base_url.includes("127.0.0.1") ||
+                  p.base_url.includes("localhost") ||
+                  p.base_url.includes("[::1]") ||
+                  p.type === "sensevoice" ? (
                     <Server size={20} />
                   ) : (
                     <Cloud size={20} />
@@ -528,6 +531,27 @@ export function ModelsPage({
                     </>
                   ) : (
                     "设为默认 ASR"
+                  )}
+                </button>
+              )}
+              {kind === "llm" && (
+                <button
+                  onClick={() =>
+                    change({
+                      active: {
+                        ...config.active,
+                        audit_llm: config.active.audit_llm === provider.id ? "" : provider.id,
+                      },
+                    })
+                  }
+                >
+                  {(config.active.audit_llm || config.active.llm) === provider.id ? (
+                    <>
+                      <Check size={14} />
+                      {config.active.audit_llm === provider.id ? "独立自检 LLM" : "自检跟随当前"}
+                    </>
+                  ) : (
+                    "设为自检 LLM"
                   )}
                 </button>
               )}
@@ -715,6 +739,10 @@ interface Caps {
   reference_audio: boolean;
   instructions: boolean;
   notes: string[];
+  tag_spec?: {
+    whisper_tag: string | null;
+    event_tags: Record<string, string>;
+  };
 }
 export function Capabilities({
   providerId,
@@ -771,6 +799,9 @@ export function Capabilities({
           )
           .join(" / ") || "自然语气"}
       </small>
+      {caps.tag_spec?.whisper_tag && (
+        <small>耳语规范：{caps.tag_spec.whisper_tag}</small>
+      )}
       {caps.notes?.map((n, i) => (
         <p key={i}>{n}</p>
       ))}

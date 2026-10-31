@@ -70,6 +70,41 @@ class AuditCallbackTests(unittest.TestCase):
                       {"rewrite_enabled": True, "_on_audit": lambda plan: cancelled.set(), "_cancel_check": guard})
         self.assertEqual(request.call_count, 1)
 
+    @patch.object(p, "_request")
+    def test_audit_toggle_and_separate_audit_llm(self, request):
+        request.return_value = response(candidate())
+        result = p.rewrite({"type": "openai_llm", "model": "rewrite-model"}, "原话", [],
+                           {"rewrite_enabled": True, "audit_enabled": False})
+        self.assertEqual(request.call_count, 1)
+        self.assertTrue(result["audit"]["passed"])
+        self.assertIn("已关闭", result["audit"]["message"])
+
+        request.reset_mock()
+        request.return_value = response({"passed": True, "uncertain": False,
+                                         "message": "直通自检通过", "leaked_instructions": []})
+        direct_audited = p.rewrite({"type": "openai_llm", "model": "audit-only-model"}, "我今天有点累。", [],
+                                   {"rewrite_enabled": False, "audit_enabled": True})
+        self.assertEqual(request.call_count, 1)
+        self.assertEqual(direct_audited["text"], "我今天有点累。")
+        self.assertTrue(direct_audited["audit"]["passed"])
+
+        request.reset_mock()
+        request.side_effect = [
+            response(candidate()),
+            response({"passed": True, "uncertain": False, "message": "本地自检通过", "leaked_instructions": []}),
+        ]
+        providers_list = [
+            {"id": "cloud-llm", "kind": "llm", "type": "openai_llm", "model": "cloud-rewrite"},
+            {"id": "local-llm", "kind": "llm", "type": "openai_llm", "model": "local-auditor", "base_url": "http://127.0.0.1:11434/v1"},
+        ]
+        p.rewrite(providers_list[0], "原话", [],
+                  {"rewrite_enabled": True, "audit_enabled": True,
+                   "active": {"llm": "cloud-llm", "audit_llm": "local-llm"},
+                   "providers": providers_list})
+        self.assertEqual(request.call_count, 2)
+        self.assertEqual(request.call_args_list[0].args[0]["id"], "cloud-llm")
+        self.assertEqual(request.call_args_list[1].args[0]["id"], "local-llm")
+
 
 class AuditStageTests(unittest.TestCase):
     def setUp(self):

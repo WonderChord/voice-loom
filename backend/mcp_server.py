@@ -124,14 +124,223 @@ def create_server(settings, workstation=None):
 
     @server.tool(annotations=write)
     def update_settings(changes: dict) -> dict[str, Any]:
-        """修改工作台设置。changes 支持 active、default_asr、target_language、rewrite_enabled、persona、prompt、context_limit、audio、subtitles；对象字段按键合并。"""
-        allowed = {'active', 'default_asr', 'target_language', 'rewrite_enabled', 'persona', 'prompt', 'context_limit', 'audio', 'subtitles'}
+        """修改工作台设置。changes 支持 active、default_asr、target_language、rewrite_enabled、audit_enabled、allow_events、emotion_intensity、persona、prompt、speech_prompt、style_strength、active_style_preset、style_presets、context_limit、audio、subtitles、appearance、providers；对象字段按键合并。"""
+        allowed = {
+            'active', 'default_asr', 'target_language', 'rewrite_enabled', 'audit_enabled',
+            'allow_events', 'emotion_intensity', 'persona', 'prompt', 'speech_prompt',
+            'style_strength', 'active_style_preset', 'style_presets', 'context_limit',
+            'audio', 'subtitles', 'appearance', 'providers',
+        }
         if not changes or set(changes)-allowed:
             raise ToolError('请选择工具说明中列出的设置字段')
         current = bridge.call('GET', '/config')
         for key, value in changes.items():
             current[key] = {**current[key], **value} if isinstance(current.get(key), dict) and isinstance(value, dict) else value
         return bridge.call('PUT', '/config', json=current)
+
+    @server.tool(annotations=read)
+    def list_models(kind: str = '') -> dict[str, Any]:
+        """列出已配置的本地与云端模型连接（ASR / LLM优化 / LLM自检 / TTS）及当前默认激活状态。kind 可传 asr、llm、tts 或留空。"""
+        if kind and kind not in {'asr', 'llm', 'tts'}:
+            raise ToolError('kind 请选择 asr、llm、tts 或留空')
+        config = bridge.call('GET', '/config')
+        active = config.get('active') or {}
+        default_asr = config.get('default_asr', '')
+        items = []
+        for p in config.get('providers') or []:
+            if kind and p.get('kind') != kind:
+                continue
+            base = str(p.get('base_url') or '')
+            is_local = p.get('type') in {'qwen_local', 'sensevoice', 'breeze', 'gptsovits', 'drama3_local'} or any(h in base for h in ('127.0.0.1', 'localhost', '[::1]'))
+            items.append({
+                'id': p['id'],
+                'kind': p['kind'],
+                'type': p['type'],
+                'name': p['name'],
+                'base_url': base,
+                'model': p.get('model', ''),
+                'is_local': is_local,
+                'is_active': active.get(p['kind']) == p['id'],
+                'is_audit_llm': p['kind'] == 'llm' and (active.get('audit_llm') or active.get('llm')) == p['id'],
+                'is_default_asr': p['kind'] == 'asr' and default_asr == p['id'],
+            })
+        return {
+            'active': active,
+            'default_asr': default_asr,
+            'rewrite_enabled': config.get('rewrite_enabled', False),
+            'audit_enabled': config.get('audit_enabled', True),
+            'models': items,
+        }
+
+    @server.tool(annotations=read)
+    def list_devices() -> dict[str, Any]:
+        """列出本机可用的音频输入设备（麦克风）与输出设备（耳机/虚拟声卡）及当前默认配置。"""
+        devices = bridge.call('GET', '/devices')
+        config = bridge.call('GET', '/config')
+        audio = config.get('audio') or {}
+        return {
+            **devices,
+            'configured_input_device': audio.get('input_device'),
+            'configured_output_device': audio.get('output_device'),
+        }
+
+    @server.tool(annotations=read)
+    def get_tts_tag_specs(provider: str = '') -> dict[str, Any]:
+        """拉取每个 TTS 引擎的标签规范（如 Drama3 的 <whisper>…</whisper>、[sighs]、[laughs]、情绪标签映射等）。provider 可传 ID、名称或类型（如 drama3、drama3-local、elevenlabs），留空返回当前默认 TTS 及全部 TTS 的标签规范。"""
+        config = bridge.call('GET', '/config')
+        caps = bridge.call('GET', '/capabilities')
+        tts_providers = [p for p in config.get('providers') or [] if p.get('kind') == 'tts']
+        active_tts = (config.get('active') or {}).get('tts', '')
+        key = provider.strip().lower()
+        if key:
+            matched = [
+                p for p in tts_providers
+                if p['id'].lower() == key or p['name'].lower() == key or p['type'].lower() == key
+            ] or [
+                p for p in tts_providers
+                if key in p['id'].lower() or key in p['name'].lower() or key in p['type'].lower() or key in str(p.get('model', '')).lower()
+            ]
+            if not matched:
+                raise ToolError(f'未找到匹配的 TTS 模型：{provider}')
+            results = {
+                p['id']: {
+                    'id': p['id'],
+                    'name': p['name'],
+                    'type': p['type'],
+                    'model': p.get('model', ''),
+                    'is_active': p['id'] == active_tts,
+                    **(caps.get(p['id']) or {}),
+                }
+                for p in matched
+            }
+            return {'matched_count': len(results), 'primary': results[matched[0]['id']], 'providers': results}
+        all_specs = {
+            p['id']: {
+                'id': p['id'],
+                'name': p['name'],
+                'type': p['type'],
+                'model': p.get('model', ''),
+                'is_active': p['id'] == active_tts,
+                **(caps.get(p['id']) or {}),
+            }
+            for p in tts_providers
+        }
+        return {
+            'active_tts': active_tts,
+            'active_spec': all_specs.get(active_tts),
+            'providers': all_specs,
+        }
+
+    @server.tool(annotations=write)
+    def set_defaults(
+        reference: str = '',
+        asr: str = '',
+        llm: str = '',
+        audit_llm: str | None = None,
+        tts: str = '',
+        input_device: int | str | None = None,
+        output_device: int | str | None = None,
+        rewrite_enabled: bool | None = None,
+        audit_enabled: bool | None = None,
+    ) -> dict[str, Any]:
+        """设置默认参考语音、默认 ASR/LLM优化/LLM自检/TTS 模型、默认音频输入/输出设备及流程开关。均支持按 ID、序号或名称匹配；设备传 'default' 或 '系统默认' 可恢复系统默认设备。"""
+        config = bridge.call('GET', '/config')
+        updated: dict[str, Any] = {}
+
+        def match_provider(kind_name: str, query: str) -> dict[str, Any]:
+            q = query.strip().lower()
+            candidates = [p for p in config.get('providers') or [] if p.get('kind') == kind_name]
+            exact = [p for p in candidates if p['id'].lower() == q or p['name'].lower() == q]
+            if exact:
+                return exact[0]
+            partial = [p for p in candidates if q in p['id'].lower() or q in p['name'].lower() or q in p['type'].lower() or q in str(p.get('model', '')).lower()]
+            if partial:
+                return partial[0]
+            raise ToolError(f'未找到匹配的 {kind_name.upper()} 模型：{query}')
+
+        if reference.strip():
+            q = reference.strip().lower()
+            voices = bridge.call('GET', '/references')
+            exact = [v for v in voices if v['id'].lower() == q or v['name'].lower() == q]
+            partial = exact or [v for v in voices if q in v['name'].lower() or q in v['id'].lower()]
+            if not partial:
+                raise ToolError(f'未找到匹配的参考音色：{reference}')
+            chosen = partial[0]
+            config['active']['reference'] = chosen['id']
+            updated['reference'] = {'id': chosen['id'], 'name': chosen['name']}
+
+        if asr.strip():
+            chosen = match_provider('asr', asr)
+            config['active']['asr'] = chosen['id']
+            config['default_asr'] = chosen['id']
+            updated['asr'] = {'id': chosen['id'], 'name': chosen['name']}
+
+        if llm.strip():
+            chosen = match_provider('llm', llm)
+            config['active']['llm'] = chosen['id']
+            updated['llm'] = {'id': chosen['id'], 'name': chosen['name']}
+
+        if audit_llm is not None:
+            val = audit_llm.strip()
+            if not val or val.lower() in {'follow', 'same', 'default', '跟随', '跟随优化', '同上'}:
+                config['active']['audit_llm'] = ''
+                updated['audit_llm'] = {'id': '', 'name': '跟随 LLM 优化模型'}
+            else:
+                chosen = match_provider('llm', val)
+                config['active']['audit_llm'] = chosen['id']
+                updated['audit_llm'] = {'id': chosen['id'], 'name': chosen['name']}
+
+        if tts.strip():
+            chosen = match_provider('tts', tts)
+            config['active']['tts'] = chosen['id']
+            updated['tts'] = {'id': chosen['id'], 'name': chosen['name']}
+
+        if input_device is not None or output_device is not None:
+            devices = bridge.call('GET', '/devices')
+            for field_name, list_key, raw_val in (
+                ('input_device', 'inputs', input_device),
+                ('output_device', 'outputs', output_device),
+            ):
+                if raw_val is None:
+                    continue
+                if isinstance(raw_val, str) and raw_val.strip().lower() in {'', 'default', 'none', 'null', '系统默认', '默认', '-1'}:
+                    config['audio'][field_name] = None
+                    updated[field_name] = {'id': None, 'name': '系统默认'}
+                elif isinstance(raw_val, int) and raw_val < 0:
+                    config['audio'][field_name] = None
+                    updated[field_name] = {'id': None, 'name': '系统默认'}
+                elif isinstance(raw_val, int) or (isinstance(raw_val, str) and raw_val.strip().isdigit()):
+                    dev_id = int(raw_val)
+                    avail = devices.get(list_key) or []
+                    matched = next((d for d in avail if d.get('id') == dev_id), None)
+                    if avail and matched is None:
+                        raise ToolError(f'设备 ID {dev_id} 不在可用 {list_key} 列表中')
+                    config['audio'][field_name] = dev_id
+                    updated[field_name] = {'id': dev_id, 'name': matched['name'] if matched else str(dev_id)}
+                else:
+                    q = str(raw_val).strip().lower()
+                    avail = devices.get(list_key) or []
+                    exact = [d for d in avail if str(d.get('name', '')).lower() == q]
+                    partial = exact or [d for d in avail if q in f"{d.get('name', '')} {d.get('hostapi', '')}".lower()]
+                    if not partial:
+                        raise ToolError(f'未找到匹配的音频设备：{raw_val}')
+                    chosen_dev = partial[0]
+                    config['audio'][field_name] = chosen_dev['id']
+                    updated[field_name] = {'id': chosen_dev['id'], 'name': chosen_dev['name']}
+
+        if rewrite_enabled is not None:
+            config['rewrite_enabled'] = bool(rewrite_enabled)
+            updated['rewrite_enabled'] = bool(rewrite_enabled)
+
+        if audit_enabled is not None:
+            config['audit_enabled'] = bool(audit_enabled)
+            updated['audit_enabled'] = bool(audit_enabled)
+
+        if not updated:
+            raise ToolError('请至少指定一项要设置的默认项（reference、asr、llm、audit_llm、tts、input_device、output_device、rewrite_enabled、audit_enabled）')
+
+        saved = bridge.call('PUT', '/config', json=config)
+        return {'updated': updated, 'active': saved.get('active'), 'default_asr': saved.get('default_asr'), 'audio': saved.get('audio'), 'rewrite_enabled': saved.get('rewrite_enabled'), 'audit_enabled': saved.get('audit_enabled')}
 
     @server.tool(annotations=read)
     def list_voices() -> dict[str, Any]:

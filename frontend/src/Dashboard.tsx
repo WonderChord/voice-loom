@@ -261,6 +261,7 @@ export function Dashboard({
     llm = config.providers.find((p) => p.id === config.active.llm && p.kind === "llm");
   const targetLanguage = config.target_language ?? "original";
   const translating = targetLanguage !== "original";
+  const auditEnabled = config.audit_enabled ?? true;
   const requiresLlm = translating || config.rewrite_enabled;
   const processingMode = processingModeLabel(targetLanguage, config.rewrite_enabled);
   const llmIssue = llmConnectionIssue(llm);
@@ -307,7 +308,7 @@ export function Dashboard({
     },
     {
       name: "输出自检",
-      sub: requiresLlm ? "防语气指令漏读" : "本地指令复核",
+      sub: auditEnabled ? "LLM 防语气指令漏读" : "仅本地指令复核",
       icon: ShieldCheck,
       active: stage === "audit",
     },
@@ -605,10 +606,17 @@ export function Dashboard({
               </select>
             </Field>
             <Toggle
-              label="角色润色"
-              note={translating ? "关闭后仅翻译，并继续独立自检。" : undefined}
+              label="角色润色（LLM 优化）"
+              note={translating ? "关闭后仅翻译。" : undefined}
               value={config.rewrite_enabled}
               onChange={(value) => quick({ rewrite_enabled: value })}
+              disabled={busy}
+            />
+            <Toggle
+              label="防漏读自检（LLM 自检）"
+              note="关闭后仅做本地正则指令复核。"
+              value={auditEnabled}
+              onChange={(value) => quick({ audit_enabled: value })}
               disabled={busy}
             />
             <div className="context-stat">

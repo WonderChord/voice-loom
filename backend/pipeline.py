@@ -36,8 +36,13 @@ class Cancelled(Exception):
 def validate_listening_config(config: dict, reference: dict | None) -> None:
     """Only inspect saved fields/files; never contact services or open audio devices."""
     selected = {kind: next(p for p in config["providers"] if p["id"] == config["active"][kind]) for kind in ("asr", "llm", "tts")}
+    audit_id = config["active"].get("audit_llm") or ""
+    if audit_id and config.get("audit_enabled", True):
+        audit_provider = next((p for p in config["providers"] if p["id"] == audit_id and p["kind"] == "llm"), None)
+        if audit_provider is not None:
+            selected["audit_llm"] = audit_provider
     for category, provider in selected.items():
-        if category == "llm" and not language.requires_llm(config):
+        if category in {"llm", "audit_llm"} and not language.requires_llm(config):
             continue
         kind = provider["type"]
         label = provider["name"]
