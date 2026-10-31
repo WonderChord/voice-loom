@@ -13,7 +13,9 @@ npm --prefix frontend audit
 .venv\Scripts\python.exe desktop/build.py
 ```
 
-构建输出位于 `release/`：便携 ZIP、当前用户安装 EXE 和 SHA256SUMS。便携 ZIP 带 `portable.mode`；安装包使用用户本地目录。两个包均包含核心后台、前端、原生窗口、依赖清单及第三方许可。AI 权重、Torch/FunASR 环境、录音、用户配置及对比报告由外部目录提供。
+构建输出位于 `release/`：便携 ZIP、当前用户安装 EXE、源码 ZIP 和 SHA256SUMS。便携 ZIP 带 `portable.mode`；安装包使用用户本地目录。两个包均包含核心后台、前端、原生窗口、依赖清单及第三方许可。源码 ZIP 只收 `git ls-files` 列出的文件，`.gitignore` 排除的用户数据、授权文件、录音、验收目录和构建产物不会进入；先提交再构建。AI 权重、Torch/FunASR 环境、录音、用户配置及对比报告由外部目录提供。
+
+已下载过 WebView2 SDK 和 NSIS 时，可用 `--sdk-dir desktop/.cache/webview2-<版本>`、`--nsis-dir desktop/.cache/nsis-3.13/nsis-3.13` 跳过下载。
 
 SenseVoice 可设置 `VOICE_LOOM_MODEL_PYTHON` 指向已有 Torch/FunASR Python。`backend/local_runtime.py` 集中管理 SenseVoice 模型路径与包目录、Qwen/Breeze/Drama3/GPT-SoVITS 的本机运行表；移植到其他路径时在此调整。已有 HTTP 服务可直接在“模型连接”配置。
 

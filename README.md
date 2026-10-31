@@ -15,8 +15,8 @@ Windows 本机语音工作台：麦克风或音频文件 → 语音识别 → �
 - 文字、麦克风、最长 60 秒的音频文件输入；低能量过滤与有界任务队列。
 - Qwen3-ASR、SenseVoice，本地 Breeze、Drama3、GPT-SoVITS；云端 OpenAI 兼容接口、ElevenLabs、Fish Audio。
 - 模型表演规则、角色润色风格、通用语音偏好分别保存；提供风格预设。
-- 保持原语言，或翻译为普通话、英语、日语、韩语、粤语和中英混说。翻译和润色经独立自检，歧义稿停在待确认。
-- 参考音色库、录音与合成历史、重审与重新合成、字幕实时广播和导出。
+- 保持原语言，或翻译为普通话、英语、日语、韩语、粤语和中英混说。翻译和润色经独立自检，歧义稿停在待确认。原文直通只做本地指令复核；在模型连接页设了「自检 LLM」时才另发一次 LLM 自检，自检服务未响应则退回本地复核。
+- 参考音色库、录音与合成历史、重审与重新合成、字幕实时广播和导出。文字预览稿只用于试听，不进入对话上下文。麦克风和上传的输入音频处理后删除，合成结果保留在 `runs/`。
 - 深浅主题、键盘对话框、未保存提示、自适应窄窗口。
 - 导入已有的本机模型启动环境，支持 Python 脚本或原生程序、工作目录、启动参数、模型文件和健康检查；首次任务可按需启动。
 - 可展开的调试栏显示模型启动、等待就绪、耗时、错误和日志，启动与失败时自动提示。
@@ -47,10 +47,9 @@ py -3.12 -m venv .venv
 .venv\Scripts\python.exe -m pip install -r requirements-lock.txt
 npm --prefix frontend ci
 npm --prefix frontend run build
-$env:VOICE_LOOM_PYTHON = (Resolve-Path .venv\Scripts\python.exe).Path
 .venv\Scripts\python.exe launcher.py
 ```
 
-浏览器开发启动器会完成本机会话授权后打开 Edge 窗口。模型部署入口集中在 `backend/local_runtime.py`；默认管理路径适配已有的 `G:/AI` 部署，其他电脑可配置 HTTP 服务地址或修改部署表。SenseVoice 额外使用 `VOICE_LOOM_MODEL_PYTHON` 指定现有 Torch/FunASR Python 环境。
+`launcher.py` 和 `启动声织.cmd` 优先使用项目内 `.venv`，也可用 `VOICE_LOOM_PYTHON` 指定。浏览器开发启动器会完成本机会话授权后打开 Edge 窗口。模型部署入口集中在 `backend/local_runtime.py`；默认管理路径适配已有的 `G:/AI` 部署，其他电脑可配置 HTTP 服务地址或修改部署表。SenseVoice 需要一个装有 Torch/FunASR 的独立 Python，用 `VOICE_LOOM_MODEL_PYTHON` 指定；未指定或路径不存在时，界面把 SenseVoice 显示为不可用。
 
 测试、桌面构建、依赖审计和发布检查见 [构建说明](docs/BUILD.md)，安全行为见 [SECURITY.md](SECURITY.md)，接口与目录关系见 [CONTRACT.md](CONTRACT.md)。GitHub Actions 只生成构建产物，发布由维护者操作。项目源码许可待维护者选定；第三方许可随构建包提供。
