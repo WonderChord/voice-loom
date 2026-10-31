@@ -263,6 +263,8 @@ export function Dashboard({
   const translating = targetLanguage !== "original";
   const auditEnabled = config.audit_enabled ?? true;
   const requiresLlm = translating || config.rewrite_enabled;
+  // 原文直通只在显式指定了自检 LLM 时才发起 LLM 自检，其余情况只做本地复核。
+  const llmAudit = auditEnabled && (requiresLlm || !!config.active.audit_llm);
   const processingMode = processingModeLabel(targetLanguage, config.rewrite_enabled);
   const llmIssue = llmConnectionIssue(llm);
   const submit = () =>
@@ -308,7 +310,7 @@ export function Dashboard({
     },
     {
       name: "输出自检",
-      sub: auditEnabled ? "LLM 防语气指令漏读" : "仅本地指令复核",
+      sub: llmAudit ? "LLM 防语气指令漏读" : "仅本地指令复核",
       icon: ShieldCheck,
       active: stage === "audit",
     },
@@ -619,7 +621,11 @@ export function Dashboard({
             />
             <Toggle
               label="防漏读自检（LLM 自检）"
-              note="关闭后仅做本地正则指令复核。"
+              note={
+                requiresLlm || config.active.audit_llm
+                  ? "关闭后仅做本地正则指令复核。"
+                  : "原文直通时只做本地复核；在模型连接页设了自检 LLM 才另发一次 LLM 自检。"
+              }
               value={auditEnabled}
               onChange={(value) => quick({ audit_enabled: value })}
               disabled={busy}

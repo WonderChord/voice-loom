@@ -153,7 +153,7 @@ export function PromptsPage({ config, change, save, run, notify }: Props) {
         />
         <Toggle
           label="独立防漏读审核（LLM 自检）"
-          note="开启后使用独立 LLM 请求检查语气/舞台描述是否漏入朗读正文；关闭后仅执行本地正则复核。"
+          note="开启后使用独立 LLM 请求检查语气/舞台描述是否漏入朗读正文；原文直通时需在模型连接页指定自检 LLM 才会调用。关闭后仅执行本地正则复核。"
           value={config.audit_enabled ?? true}
           onChange={(audit_enabled) => change({ audit_enabled })}
         />
