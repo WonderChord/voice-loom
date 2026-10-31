@@ -1,0 +1,14 @@
+# Core desktop/MCP runtime: Python 3.12 x64. AI model environments are external.
+fastapi>=0.141.1,<1
+uvicorn>=0.53.0,<1
+pydantic>=2.13.5,<3
+python-multipart>=0.0.32,<1
+httpx>=0.28.1,<1
+requests>=2.32,<3
+psutil>=7.2.2,<8
+numpy>=1.26.4,<2
+sounddevice>=0.5.0,<1
+soundfile>=0.12.1,<1
+webrtcvad-wheels>=2.0.14,<3
+mcp==2.3.0
+filelock>=3.20,<4
