@@ -3,3 +3,4 @@
 *.vbs -text
 *.png binary
 *.wav binary
+*.sh text eol=lf
