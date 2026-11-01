@@ -185,6 +185,7 @@ export interface Runtime {
   skipped_audio_count?: number;
   last_skip_reason?: string | null;
   dropped_audio_count?: number;
+  tts_remote?: { provider: string; ok: boolean; rtt_ms: number; checked_at: string; message: string } | null;
 }
 export interface Device {
   id: number;

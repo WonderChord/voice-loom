@@ -431,6 +431,15 @@ export function Dashboard({
                 )}
               </div>
             )}
+            {runtime.listening && runtime.tts_remote && (
+              <div className="energy-status" title={runtime.tts_remote.message}>
+                <span className={runtime.tts_remote.ok ? "" : "error-text"}>
+                  云端 TTS {runtime.tts_remote.provider} ·{" "}
+                  {runtime.tts_remote.ok ? `已连通 ${runtime.tts_remote.rtt_ms} ms` : "无法连接"}
+                </span>
+                <span>检查于 {new Date(runtime.tts_remote.checked_at).toLocaleTimeString()}</span>
+              </div>
+            )}
           </section>
           <section className="card conversation">
             <div className="conversation-heading">

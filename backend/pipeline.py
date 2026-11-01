@@ -128,6 +128,8 @@ class Pipeline:
         self.skipped_audio_count = 0
         self.last_skip_reason = ""
         self.dropped_audio_count = 0
+        self.tts_remote: dict | None = None
+        self.probe_thread: threading.Thread | None = None
         self.logs = deque(maxlen=200)
         self.logs_revision = 1
         self.history: list[dict] = []
@@ -221,6 +223,7 @@ class Pipeline:
                 "skipped_audio_count": self.skipped_audio_count,
                 "last_skip_reason": self.last_skip_reason,
                 "dropped_audio_count": self.dropped_audio_count,
+                "tts_remote": dict(self.tts_remote) if self.tts_remote else None,
                 "uptime_s": round(time.monotonic() - self.started, 1),
             }
             if records is not None:
@@ -253,6 +256,60 @@ class Pipeline:
                 if not self.listening:
                     raise ValueError(self.last_error or "输入设备未开始监听，请检查设备连接")
             self.log("info", "持续监听已开始")
+            self._start_remote_probe()
+
+    REMOTE_PROBE_INTERVAL_S = 240
+
+    def _remote_tts(self):
+        config = self.store.config(decrypted=True)
+        provider = next((p for p in config["providers"] if p["id"] == config["active"]["tts"]), None)
+        host = urlsplit(str((provider or {}).get("base_url") or "")).hostname
+        if not provider or not host or host in {"127.0.0.1", "localhost", "::1"}:
+            return None
+        if provider["type"] not in {"breeze", "drama3_local", "gptsovits", "openai_tts"}:
+            return None
+        return provider
+
+    def _start_remote_probe(self):
+        """监听期间定时探测云端自部署 TTS：开播即建立连接，工作台显示可达状态与往返耗时。"""
+        with self.lock:
+            if self.probe_thread and self.probe_thread.is_alive():
+                return
+            if self._remote_tts() is None:
+                self.tts_remote = None
+                return
+            self.probe_thread = threading.Thread(target=self._probe_loop, args=(self.generation,),
+                                                 name="voice-loom-tts-probe", daemon=True)
+            self.probe_thread.start()
+
+    def _probe_loop(self, generation):
+        def stopped():
+            return self.closed or not self.listening or self.generation != generation
+        while True:
+            with self.condition:
+                if stopped():
+                    return
+            provider = self._remote_tts()
+            if provider is None:
+                with self.lock:
+                    self.tts_remote = None
+                return
+            started = time.monotonic()
+            try:
+                result = self.providers.test_provider(provider)
+            except Exception as exc:
+                result = {"ok": False, "message": str(exc)}
+            status = {"provider": provider["name"], "ok": bool(result.get("ok")),
+                      "rtt_ms": round((time.monotonic() - started) * 1000), "checked_at": now(),
+                      "message": self.safe_error(result.get("message", ""))}
+            with self.lock:
+                previous = self.tts_remote
+                self.tts_remote = status
+            if not previous or previous["ok"] != status["ok"]:
+                text = f"已连通，往返 {status['rtt_ms']} 毫秒" if status["ok"] else "无法连接：" + status["message"]
+                self.log("info" if status["ok"] else "warning", f"云端 TTS {status['provider']} {text}")
+            with self.condition:
+                self.condition.wait_for(stopped, timeout=self.REMOTE_PROBE_INTERVAL_S)
 
     def stop(self):
         with self.control_lock:

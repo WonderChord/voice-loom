@@ -412,6 +412,27 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(self.providers.calls, [])
         self.assertEqual(self.app.state.pipeline.history, [])
 
+    def test_remote_tts_is_probed_while_listening_and_local_tts_is_not(self):
+        self.client.post("/api/references", files={"file": ("voice.wav", wav_bytes())},
+                         data={"transcript": "参考台词"})
+        self.assertEqual(self.client.post("/api/listen/start").status_code, 200)
+        self.assertIsNone(self.client.get("/api/state").json()["tts_remote"])
+        self.client.post("/api/listen/stop")
+        config = self.client.get("/api/config").json()
+        tts = next(p for p in config["providers"] if p["id"] == config["active"]["tts"])
+        tts["base_url"] = "https://tts.example.test"
+        self.assertEqual(self.client.put("/api/config", json=config).status_code, 200)
+        self.assertEqual(self.client.post("/api/listen/start").status_code, 200)
+        deadline = time.monotonic() + 2
+        while not self.client.get("/api/state").json()["tts_remote"] and time.monotonic() < deadline:
+            time.sleep(0.01)
+        status = self.client.get("/api/state").json()["tts_remote"]
+        self.assertTrue(status["ok"])
+        self.assertEqual(status["provider"], tts["name"])
+        self.client.post("/api/listen/stop")
+        self.app.state.pipeline.probe_thread.join(timeout=2)
+        self.assertFalse(self.app.state.pipeline.probe_thread.is_alive())
+
     def test_processed_input_audio_is_removed_and_full_queue_drop_is_reported(self):
         self.client.post("/api/references", files={"file": ("voice.wav", wav_bytes())},
                          data={"transcript": "参考台词"})
