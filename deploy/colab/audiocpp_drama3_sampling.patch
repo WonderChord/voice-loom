@@ -1,0 +1,96 @@
+diff --git a/include/engine/community_models/fish_drama3/generator.h b/include/engine/community_models/fish_drama3/generator.h
+index 8c1e4a2..9d5e1ab 100644
+--- a/include/engine/community_models/fish_drama3/generator.h
++++ b/include/engine/community_models/fish_drama3/generator.h
+@@ -10,7 +10,7 @@ namespace engine::models::fish_drama3 {
+ struct Drama3Sampling {
+     float temperature = 1.0F;
+     float top_p = 0.9F;
+-    int top_k = 30;
++    int top_k = 4097;
+     int64_t max_frames = 1024;
+     uint32_t seed = 0;
+ };
+diff --git a/model_specs/fish_drama3.json b/model_specs/fish_drama3.json
+index ccbe322..90fc798 100644
+--- a/model_specs/fish_drama3.json
++++ b/model_specs/fish_drama3.json
+@@ -121,7 +121,7 @@
+         "description": "Top-k candidate count.",
+         "required": false,
+         "min": 1,
+-        "default": 30
++        "default": 4097
+       },
+       {
+         "name": "seed",
+diff --git a/src/community_models/fish_drama3/generator.cpp b/src/community_models/fish_drama3/generator.cpp
+index a664c6d..c13e006 100644
+--- a/src/community_models/fish_drama3/generator.cpp
++++ b/src/community_models/fish_drama3/generator.cpp
+@@ -18,7 +18,7 @@ namespace engine::models::fish_drama3 {
+ namespace {
+ 
+ int32_t sample(const std::vector<float> & logits, float temperature, int top_k,
+-               float top_p, std::mt19937 & random) {
++               float top_p, std::mt19937 & random, bool keep_top_p_crossing_token = false) {
+     if (logits.empty()) throw std::runtime_error("Drama 3 sampler has no logits");
+     if (temperature == 0 || top_k == 1)
+         return sampling::HfLogitsProcessor::argmax(logits.data(), logits.size(), "Drama 3");
+@@ -40,8 +40,10 @@ int32_t sample(const std::vector<float> & logits, float temperature, int top_k,
+     if (!(total > 0) || !std::isfinite(total)) throw std::runtime_error("Drama 3 sampler encountered nonfinite logits");
+     double cumulative = 0;
+     for (size_t rank = 0; rank < order.size(); ++rank) {
+-        cumulative += probabilities[rank] / total;
++        const double p = probabilities[rank] / total;
++        if (!keep_top_p_crossing_token) cumulative += p;
+         if (rank > 0 && (cumulative > top_p || rank >= static_cast<size_t>(top_k))) probabilities[rank] = 0;
++        if (keep_top_p_crossing_token) cumulative += p;
+     }
+     std::discrete_distribution<size_t> choice(probabilities.begin(), probabilities.end());
+     return order[choice(random)];
+@@ -226,8 +228,8 @@ Drama3Generation Drama3Generator::generate(const std::string & text, const std::
+         const auto candidates = backbone_->lm_head(hidden);
+         component_ms[4] += debug::elapsed_ms(component_started);
+         component_started = ProfileClock::now();
+-        const int32_t first = sample(candidates, sampling.temperature, sampling.top_k, sampling.top_p, random);
+-        const int32_t second = sample(candidates, 1.0F, 30, 0.95F, random);
++        const int32_t first = sample(candidates, sampling.temperature, sampling.top_k, sampling.top_p, random, true);
++        const int32_t second = sample(candidates, 1.0F, 30, 0.95F, random, true);
+         const int32_t first_token = first == 0 ? assets_->eos : assets_->tower.semantic_begin + first - 1;
+         const bool repeats = first != 0 && std::find(recent.begin(), recent.end(), first_token) != recent.end();
+         const int32_t selected = repeats ? second : first;
+@@ -250,7 +252,7 @@ Drama3Generation Drama3Generator::generate(const std::string & text, const std::
+             tower_hidden = tower_output.hidden;
+             if (layer >= config.shared_layers) {
+                 component_started = ProfileClock::now();
+-                next[2 + book] = sample(tower_output.logits, sampling.temperature, sampling.top_k, sampling.top_p, random);
++                next[2 + book] = sample(tower_output.logits, sampling.temperature, std::min(sampling.top_k, 30), sampling.top_p, random, false);
+                 component_ms[5] += debug::elapsed_ms(component_started);
+             }
+         }
+diff --git a/src/community_models/fish_drama3/loader.cpp b/src/community_models/fish_drama3/loader.cpp
+index c1c2239..14722df 100644
+--- a/src/community_models/fish_drama3/loader.cpp
++++ b/src/community_models/fish_drama3/loader.cpp
+@@ -13,6 +13,7 @@ std::shared_ptr<runtime::IVoiceModelLoader> make_fish_drama3_loader() {
+         // Published standalone contracts predate these opt-in controls.
+         // Their values are checked by the generator and backbone constructors.
+         for (const auto * key : {"fish_drama3.disk_experts", "fish_drama3.expert_cache_size", "fish_drama3.pin_experts",
++                                "fish_drama3.backbone_prefill_cache_mb", "fish_drama3.tower_prefill_cache_mb",
+                                 "fish_drama3.codec_encoder_f32_accumulation", "fish_drama3.codec_encoder_bf16_compute"}) {
+             if (!contract->session_option_keys.count(key)) validation_options.options.erase(key);
+         }
+diff --git a/src/community_models/fish_drama3/session.cpp b/src/community_models/fish_drama3/session.cpp
+index 86d1762..9a315fe 100644
+--- a/src/community_models/fish_drama3/session.cpp
++++ b/src/community_models/fish_drama3/session.cpp
+@@ -135,7 +135,7 @@ runtime::TaskResult Drama3Session::synthesize(const runtime::TaskRequest & reque
+     try {
+         sampling.temperature = runtime::parse_finite_float_option(effective.options, {"temperature"}).value_or(1.0F);
+         sampling.top_p = runtime::parse_finite_float_option(effective.options, {"top_p"}).value_or(0.9F);
+-        sampling.top_k = runtime::parse_int_option(effective.options, {"top_k"}).value_or(30);
++        sampling.top_k = runtime::parse_int_option(effective.options, {"top_k"}).value_or(4097);
+         sampling.max_frames = runtime::parse_positive_i64_option(effective.options, {"max_tokens", "max_new_tokens"}, 1024);
+         seed = runtime::parse_u32_option(effective.options, {"seed"});
+     } catch (const std::runtime_error & error) {

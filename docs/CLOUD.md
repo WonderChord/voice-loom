@@ -4,19 +4,29 @@
 
 ## Colab L4 一键启动（已验证）
 
-`deploy/colab/` 里的脚本放到 Google Drive 的 `MyDrive/VoiceLoom_Cloud/`，Colab 选 L4 GPU 后运行：
+`deploy/colab/` 里的脚本放到 Google Drive 的 `MyDrive/VoiceLoom_Cloud/`，Colab 选 L4 GPU 后运行（`breeze` 或 `drama3`）：
 
 ```python
 from google.colab import drive
 drive.mount('/content/drive')
-!bash /content/drive/MyDrive/VoiceLoom_Cloud/launch.sh
+!bash /content/drive/MyDrive/VoiceLoom_Cloud/launch.sh breeze
 ```
 
-- 首次运行在 L4 上编译 Breeze-TTS-2.cpp（CUDA，约 8 分钟），并从 Hugging Face 下载 GGUF。编译产物、模型、预置音色和密钥都存在 Drive 里，之后换新运行时约 1 分钟就能起来。
-- 输出的 `TTS_URL` 是 cloudflared 临时隧道地址（每次启动都会变）；`api_key.txt` 首次随机生成，之后一直沿用。声织「模型连接」里把 Breeze 的服务地址改成 `TTS_URL`，API 密钥填 `api_key.txt` 的内容。
-- `auth_proxy.py` 校验 `Authorization: Bearer` 后转发给只监听 `127.0.0.1` 的 Breeze；隧道提供 HTTPS。
-- 2026-11-01 实测（副机 → Cloudflare 隧道 → L4）：建连约 5 秒（声织对远端地址的连接超时为 20 秒）；热身后合成 2～6 秒的句子，耗时约等于音频时长；预置音色在换新运行时后仍然可用。
+- 首次运行在 L4 上编译（Breeze 约 8 分钟，audio.cpp 约 10 分钟），并从 Hugging Face 下载 GGUF。编译产物、模型、预置音色和密钥都存在 Drive 里，之后换新运行时只需恢复和启动。
+- 输出的 URL 是 cloudflared 临时隧道地址（每次启动都会变）；`api_key.txt` 首次随机生成，两个引擎共用、之后一直沿用。声织「模型连接」里把对应引擎的服务地址改成该 URL，API 密钥填 `api_key.txt` 的内容。
+- `auth_proxy.py` 校验 `Authorization: Bearer` 后转发给只监听 `127.0.0.1` 的模型服务；隧道提供 HTTPS。
 - Colab 空闲时会回收运行时，开播前运行一次即可。
+
+2026-11-01 实测（副机 → Cloudflare 隧道 → L4，建连约 5 秒，声织对远端地址的连接超时为 20 秒）：
+
+| 引擎 | 显存 | 启动 | 热身后每句耗时 |
+|---|---|---|---|
+| Breeze Q8 | 4.1 GB | 约 1 分钟 | 约等于音频时长（2～6 秒句子） |
+| Drama3 Q4 专家 / Q8 主干 | 14.5 GB（专家缓存 128） | 模型复制到本地 SSD 约 2 分钟，首句 70 秒左右 | 服务端 RTF 约 2.7（3 秒音频约 8 秒，加隧道约 12 秒） |
+
+Drama3 在 L4 上明显慢于本机 5090D：23 GB 的模型放不进 L4 的 22 GB 显存，专家权重要从磁盘按需调入。直播实时对话用 Breeze；Drama3 适合不赶时间的预生成台词，或换 A100 / H100 运行时。`DRAMA3_EXPERT_CACHE` 环境变量可调专家缓存槽数（默认 64，L4 上 128 首句更快）。
+
+云端 Drama3 的编译打了与本机相同的采样补丁 `audiocpp_drama3_sampling.patch`（采样对齐 Fish 官方实现），预置音色放在 Drive 的 `drama3/voices/`：`<名字>.wav` 加同目录 `prompt_text`（每行 `名字|参考文字`），无需重启即可新增。
 
 ## 参考音色：两种用法
 
