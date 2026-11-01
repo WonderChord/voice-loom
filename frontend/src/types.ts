@@ -46,6 +46,28 @@ export function llmConnectionIssue(provider?: Provider) {
   if (!local && !hasKey) return "当前远程 LLM 尚未配置密钥，请前往模型连接设置。";
   return "";
 }
+export interface Pronunciation {
+  text: string;
+  say: string;
+  case_sensitive: boolean;
+  enabled: boolean;
+  providers: string[];
+  note: string;
+}
+export interface Character {
+  id: string;
+  name: string;
+  note: string;
+  reference: string;
+  tts: string;
+  persona: string;
+  prompt: string;
+  style_strength: StyleStrength;
+  rewrite_enabled: boolean;
+  target_language: TargetLanguage;
+  emotion_intensity: number;
+  pronunciations: Pronunciation[];
+}
 export interface StylePreset {
   id: string;
   name: string;
@@ -63,6 +85,9 @@ export interface Config {
   style_presets: StylePreset[];
   active_style_preset: string;
   style_strength: StyleStrength;
+  characters: Character[];
+  active_character: string;
+  pronunciations: Pronunciation[];
   context_limit: number;
   target_language: TargetLanguage;
   rewrite_enabled: boolean;

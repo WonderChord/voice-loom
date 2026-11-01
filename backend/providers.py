@@ -23,7 +23,7 @@ import numpy as np
 import requests
 import soundfile as sf
 
-from . import language, local_runtime, performance
+from . import language, local_runtime, performance, pronunciation
 from .resample import resample_poly
 
 EMOTIONS = ("neutral", "happy", "sad", "angry", "calm", "thoughtful", "excited")
@@ -1248,6 +1248,8 @@ def synthesize(provider: dict, plan: dict, reference: dict | None, output_path: 
     pending_emotion = "neutral"
     pending_has_speech = False
     global_intensity = float(_number(config.get("emotion_intensity", 1), 0, 1, "情绪强度"))
+    # 读音只改送给 TTS 的文本，表演稿、字幕和记录保留原词。
+    lexicon = pronunciation.effective(config, provider.get("id", ""))
     def flush_tagged():
         nonlocal pending_has_speech
         if pending:
@@ -1273,7 +1275,7 @@ def synthesize(provider: dict, plan: dict, reference: dict | None, output_path: 
             else:
                 warnings.append(f"当前 TTS 不支持 {segment['event']} 声音动作，已略过该动作。")
         else:
-            text = _clean_text(segment["text"], warnings)
+            text = pronunciation.apply(_clean_text(segment["text"], warnings), lexicon)
             if not text:
                 continue
             emotion = segment["emotion"]

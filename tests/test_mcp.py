@@ -146,5 +146,29 @@ class MCPTests(unittest.TestCase):
             self.assertTrue(moved.is_error)
         self.run_client(check)
 
+    def test_mcp_characters_can_be_listed_and_switched_by_name(self):
+        async def check(client, bridge):
+            bridge.config['characters'] = [
+                {'id': 'noa', 'name': '乃爱', 'reference': 'voice-duya', 'tts': 'breeze', 'pronunciations': [{}]},
+                {'id': 'noa-ja', 'name': '乃爱 日语', 'reference': '', 'tts': '', 'pronunciations': []}]
+            listed = await client.call_tool('list_characters', {})
+            self.assertEqual(listed.structured_content['characters'][0]['reference'], '渡鸦')
+            self.assertEqual(listed.structured_content['characters'][0]['pronunciations'], 1)
+            ambiguous = await client.call_tool('use_character', {'character': '乃'})
+            self.assertTrue(ambiguous.is_error)
+            self.assertIn('多个匹配', ambiguous.content[0].text)
+            original_call = bridge.call
+            def call(method, path, **kwargs):
+                if path == '/characters/noa/apply':
+                    bridge.calls.append((method, path, kwargs))
+                    return {'config': {'active': {'tts': 'breeze', 'reference': 'voice-duya'}}, 'warnings': []}
+                return original_call(method, path, **kwargs)
+            bridge.call = call
+            used = await client.call_tool('use_character', {'character': '乃爱'})
+            self.assertFalse(used.is_error)
+            self.assertEqual(used.structured_content['character'], '乃爱')
+            self.assertIn(('POST', '/characters/noa/apply', {}), bridge.calls)
+        self.run_client(check)
+
 
 if __name__=='__main__': unittest.main()

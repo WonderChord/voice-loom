@@ -240,6 +240,30 @@ class Pipeline:
             self.subtitles.configure(saved["subtitles"])
             return saved
 
+    def apply_character(self, character_id: str) -> dict:
+        """切换角色卡：把卡上的音色、TTS、人设、语言和情绪强度写入当前设置；监听中也可切换，下一句生效。"""
+        with self.control_lock, self.lock:
+            value = self.store.config()
+            card = next((c for c in value.get("characters") or [] if c["id"] == character_id), None)
+            if card is None:
+                raise KeyError("角色卡不存在")
+            value.update(active_character=card["id"], persona=card["persona"] or value["persona"],
+                         prompt=card["prompt"] or value["prompt"], style_strength=card["style_strength"],
+                         rewrite_enabled=card["rewrite_enabled"], target_language=card["target_language"],
+                         emotion_intensity=card["emotion_intensity"], active_style_preset="")
+            notes = []
+            if card["tts"]:
+                value["active"]["tts"] = card["tts"]
+            if card["reference"]:
+                if card["reference"] in {r["id"] for r in self.store.references()}:
+                    value["active"]["reference"] = card["reference"]
+                else:
+                    notes.append("角色卡的参考语音已删除，保留当前音色")
+            saved = self.store.save_config(Config.model_validate(value))
+            self.subtitles.configure(saved["subtitles"])
+        self.log("info", f"已切换到角色卡「{card['name']}」" + ("；" + "；".join(notes) if notes else ""))
+        return {"config": saved, "warnings": notes}
+
     def listen(self):
         with self.control_lock:
             with self.lock:

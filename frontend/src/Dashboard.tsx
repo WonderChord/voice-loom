@@ -51,6 +51,7 @@ type Props = {
   notify: (s: string, error?: boolean) => void;
   save: () => Promise<Config>;
   dirty: boolean;
+  applyCharacter: (id: string) => void;
 };
 export function EntryCard({
   entry,
@@ -231,6 +232,7 @@ export function Dashboard({
   notify,
   save,
   dirty,
+  applyCharacter,
 }: Props) {
   const [caps, setCaps] = useState<Capabilities | null>(null);
   useEffect(() => {
@@ -583,6 +585,24 @@ export function Dashboard({
                 <ChevronRight size={19} />
               </button>
             </div>
+            {(config.characters || []).length > 0 && (
+              <div className="compact-field">
+                <label htmlFor="quick-character">角色</label>
+                <select
+                  id="quick-character"
+                  value={config.active_character}
+                  disabled={busy}
+                  onChange={(e) => e.target.value && applyCharacter(e.target.value)}
+                >
+                  <option value="">未使用角色卡</option>
+                  {config.characters.map((c) => (
+                    <option value={c.id} key={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
             {(["asr", "llm", "tts"] as const).map((kind) => (
               <div className="compact-field" key={kind}>
                 <label htmlFor={"quick-" + kind}>{kind.toUpperCase()}</label>

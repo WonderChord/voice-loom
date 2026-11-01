@@ -19,6 +19,7 @@ import {
   Plus,
   ChevronRight,
   Captions,
+  Contact,
 } from "lucide-react";
 import {
   api,
@@ -35,6 +36,7 @@ import { applyTheme } from "./theme";
 import { SubtitlesPage } from "./SubtitlesPage";
 import { DesktopTools } from "./DesktopTools";
 import { DebugPanel } from "./DebugPanel";
+import { CharactersPage } from "./CharactersPage";
 import {
   VoicesPage,
   ModelsPage,
@@ -47,6 +49,7 @@ const nav = [
   { id: "studio", label: "工作台", icon: AudioLines },
   { id: "voices", label: "参考音色", icon: Users },
   { id: "models", label: "模型连接", icon: Boxes },
+  { id: "characters", label: "角色卡与读音", icon: Contact },
   { id: "prompts", label: "人设与提示词", icon: NotebookPen },
   { id: "devices", label: "音频设备", icon: SlidersHorizontal },
   { id: "subtitles", label: "直播字幕", icon: Captions },
@@ -221,6 +224,18 @@ export default function App() {
         notify("已开始持续监听，停顿后自动转述");
       }
     });
+  const applyCharacter = (id: string) =>
+    run(async () => {
+      if (dirty) await save();
+      const result = await api<{ config: Config; warnings: string[] }>(`/characters/${id}/apply`, {
+        method: "POST",
+      });
+      setConfig(result.config);
+      dirtyRef.current = false;
+      setDirty(false);
+      const name = result.config.characters.find((c) => c.id === id)?.name || "";
+      notify(result.warnings.length ? result.warnings.join("；") : `已切换到角色「${name}」`, result.warnings.length > 0);
+    });
   const editEntry = (entry: Entry) => {
     if (entry.plan) setEditing({ entry, plan: structuredClone(entry.plan) });
   };
@@ -366,6 +381,7 @@ export default function App() {
               notify={notify}
               save={save}
               dirty={dirty}
+              applyCharacter={applyCharacter}
             />
           )}
           {page === "voices" && (
@@ -381,6 +397,18 @@ export default function App() {
           )}
           {page === "models" && (
             <ModelsPage config={config} change={change} save={save} run={run} notify={notify} />
+          )}
+          {page === "characters" && (
+            <CharactersPage
+              config={config}
+              voices={voices}
+              change={change}
+              save={save}
+              applyCharacter={applyCharacter}
+              dirty={dirty}
+              run={run}
+              notify={notify}
+            />
           )}
           {page === "prompts" && (
             <PromptsPage config={config} change={change} save={save} run={run} notify={notify} />

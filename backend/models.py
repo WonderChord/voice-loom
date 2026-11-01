@@ -110,6 +110,46 @@ class SubtitleConfig(Model):
     display_seconds: int = Field(default=8, ge=2, le=60)
 
 
+class Pronunciation(Model):
+    text: str = Field(min_length=1, max_length=100)
+    say: str = Field(max_length=200)
+    case_sensitive: bool = False
+    enabled: bool = True
+    # 留空对所有 TTS 生效；填写后只在这些 TTS 连接上替换（不同引擎对同一写法读法不同）。
+    providers: list[str] = Field(default_factory=list, max_length=40)
+    note: str = Field(default="", max_length=200)
+
+    @field_validator("text")
+    @classmethod
+    def meaningful_text(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("读音词条的原词不能为空")
+        return value.strip()
+
+
+class Character(Model):
+    """角色卡：一键切换参考音色、TTS、人设风格、目标语言和角色专属读音。"""
+    id: str = Field(min_length=1, max_length=80, pattern=r"^[a-zA-Z0-9_-]+$")
+    name: str = Field(min_length=1, max_length=100)
+    note: str = Field(default="", max_length=500)
+    reference: str = Field(default="", max_length=80)
+    tts: str = Field(default="", max_length=80)
+    persona: str = Field(default="", max_length=12000)
+    prompt: str = Field(default="", max_length=16000)
+    style_strength: Literal["off", "light", "balanced", "strong"] = "light"
+    rewrite_enabled: bool = False
+    target_language: TargetLanguage = "original"
+    emotion_intensity: float = Field(default=0.6, ge=0, le=1)
+    pronunciations: list[Pronunciation] = Field(default_factory=list, max_length=500)
+
+    @field_validator("name")
+    @classmethod
+    def meaningful_name(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("角色卡名称不能为空")
+        return value.strip()
+
+
 class StylePreset(Model):
     id: str = Field(min_length=1, max_length=80, pattern=r"^[a-zA-Z0-9_-]+$")
     name: str = Field(min_length=1, max_length=100)
@@ -169,6 +209,22 @@ class Config(Model):
     style_presets: list[StylePreset] = Field(default_factory=default_style_presets, max_length=40)
     active_style_preset: str = Field(default="", max_length=80)
     style_strength: Literal["off", "light", "balanced", "strong"] = "light"
+    characters: list[Character] = Field(default_factory=list, max_length=40)
+    active_character: str = Field(default="", max_length=80)
+    pronunciations: list[Pronunciation] = Field(default_factory=list, max_length=1000)
+
+    @model_validator(mode="after")
+    def valid_characters(self):
+        ids = {card.id for card in self.characters}
+        if len(ids) != len(self.characters):
+            raise ValueError("角色卡 ID 不能重复")
+        if self.active_character and self.active_character not in ids:
+            raise ValueError("当前角色卡不存在，请重新选择")
+        tts = {p.id for p in self.providers if p.kind == "tts"}
+        for card in self.characters:
+            if card.tts and card.tts not in tts:
+                raise ValueError(f"角色卡「{card.name}」的 TTS 不存在，请重新选择")
+        return self
 
     @model_validator(mode="after")
     def valid_selection(self):
@@ -280,3 +336,8 @@ class TextRequest(Model):
 class SynthesizeRequest(Model):
     plan: Plan
     play_audio: bool | None = None
+
+
+class PronunciationPreview(Model):
+    text: str = Field(min_length=1, max_length=2000)
+    provider: str = Field(default="", max_length=80)

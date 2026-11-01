@@ -412,6 +412,37 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(self.providers.calls, [])
         self.assertEqual(self.app.state.pipeline.history, [])
 
+    def test_character_card_switches_voice_tts_style_and_pronunciation(self):
+        first = self.client.post("/api/references", files={"file": ("a.wav", wav_bytes())},
+                                 data={"transcript": "参考台词"}).json()
+        second = self.client.post("/api/references", files={"file": ("b.wav", wav_bytes())},
+                                  data={"transcript": "另一段"}).json()
+        config = self.client.get("/api/config").json()
+        config["characters"] = [{
+            "id": "noa", "name": "乃爱", "reference": second["id"], "tts": "elevenlabs",
+            "persona": "我是乃爱。", "prompt": "冷淡简短。", "style_strength": "strong",
+            "rewrite_enabled": False, "target_language": "original", "emotion_intensity": 0.3,
+            "pronunciations": [{"text": "乃爱", "say": "奶爱"}]}]
+        config["pronunciations"] = [{"text": "声织", "say": "声之"}]
+        config["active"]["reference"] = first["id"]
+        self.assertEqual(self.client.put("/api/config", json=config).status_code, 200)
+        preview = self.client.post("/api/pronunciations/preview", json={"text": "乃爱用声织"}).json()
+        self.assertEqual(preview["text"], "乃爱用声之")
+        applied = self.client.post("/api/characters/noa/apply").json()["config"]
+        self.assertEqual(applied["active_character"], "noa")
+        self.assertEqual(applied["active"]["reference"], second["id"])
+        self.assertEqual(applied["active"]["tts"], "elevenlabs")
+        self.assertEqual((applied["persona"], applied["style_strength"], applied["emotion_intensity"]),
+                         ("我是乃爱。", "strong", 0.3))
+        preview = self.client.post("/api/pronunciations/preview", json={"text": "乃爱用声织"}).json()
+        self.assertEqual(preview, {"provider": "elevenlabs", "text": "奶爱用声之"})
+        self.assertEqual(self.client.post("/api/characters/ghost/apply").status_code, 404)
+        # 删除卡上的参考语音后切换：保留当前音色并提示，不阻断切换。
+        self.client.delete(f"/api/references/{second['id']}")
+        result = self.client.post("/api/characters/noa/apply").json()
+        self.assertEqual(result["warnings"], ["角色卡的参考语音已删除，保留当前音色"])
+        self.assertEqual(result["config"]["active"]["reference"], first["id"])
+
     def test_remote_tts_is_probed_while_listening_and_local_tts_is_not(self):
         self.client.post("/api/references", files={"file": ("voice.wav", wav_bytes())},
                          data={"transcript": "参考台词"})

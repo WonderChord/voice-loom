@@ -22,7 +22,8 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response, StreamingResponse
 from starlette.concurrency import run_in_threadpool
 
-from .models import Config, ReferencePatch, SynthesizeRequest, TextRequest
+from .models import Config, PronunciationPreview, ReferencePatch, SynthesizeRequest, TextRequest
+from . import pronunciation
 from .pipeline import BusyError, Cancelled, Pipeline
 from .store import Store
 from .subtitles import SUBTITLE_HTML
@@ -307,6 +308,16 @@ def create_app(data_dir: str | Path | None = None, *, providers=None, audio_fact
     @app.put("/api/config")
     def put_config(config: Config):
         return pipeline.update_config(config)
+
+    @app.post("/api/characters/{character_id}/apply")
+    def apply_character(character_id: str):
+        return pipeline.apply_character(character_id)
+
+    @app.post("/api/pronunciations/preview")
+    def preview_pronunciation(body: PronunciationPreview):
+        config = store.config()
+        tts = body.provider or config["active"]["tts"]
+        return {"provider": tts, "text": pronunciation.apply(body.text, pronunciation.effective(config, tts))}
 
     @app.post("/api/providers/{provider_id}/test")
     def test_provider(provider_id: str):

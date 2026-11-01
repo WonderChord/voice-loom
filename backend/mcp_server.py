@@ -124,12 +124,12 @@ def create_server(settings, workstation=None):
 
     @server.tool(annotations=write)
     def update_settings(changes: dict) -> dict[str, Any]:
-        """修改工作台设置。changes 支持 active、default_asr、target_language、rewrite_enabled、audit_enabled、allow_events、emotion_intensity、persona、prompt、speech_prompt、style_strength、active_style_preset、style_presets、context_limit、audio、subtitles、appearance；对象字段按键合并。模型的地址与密钥请在模型连接页修改。"""
+        """修改工作台设置。changes 支持 active、default_asr、target_language、rewrite_enabled、audit_enabled、allow_events、emotion_intensity、persona、prompt、speech_prompt、style_strength、active_style_preset、style_presets、characters、pronunciations、context_limit、audio、subtitles、appearance；对象字段按键合并。切换角色卡请用 use_character。模型的地址与密钥请在模型连接页修改。"""
         allowed = {
             'active', 'default_asr', 'target_language', 'rewrite_enabled', 'audit_enabled',
             'allow_events', 'emotion_intensity', 'persona', 'prompt', 'speech_prompt',
             'style_strength', 'active_style_preset', 'style_presets', 'context_limit',
-            'audio', 'subtitles', 'appearance',
+            'audio', 'subtitles', 'appearance', 'characters', 'pronunciations',
         }
         if not changes or set(changes)-allowed:
             raise ToolError('请选择工具说明中列出的设置字段')
@@ -137,6 +137,45 @@ def create_server(settings, workstation=None):
         for key, value in changes.items():
             current[key] = {**current[key], **value} if isinstance(current.get(key), dict) and isinstance(value, dict) else value
         return bridge.call('PUT', '/config', json=current)
+
+    @server.tool(annotations=read)
+    def list_characters() -> dict[str, Any]:
+        """列出角色卡（音色、TTS、人设、目标语言、专属读音条数）与当前角色卡。"""
+        config = bridge.call('GET', '/config')
+        names = {p['id']: p['name'] for p in config.get('providers') or []}
+        voices = {v['id']: v['name'] for v in bridge.call('GET', '/references')}
+        return {
+            'active_character': config.get('active_character', ''),
+            'characters': [{
+                'id': c['id'], 'name': c['name'], 'note': c.get('note', ''),
+                'reference': voices.get(c.get('reference', ''), c.get('reference', '')),
+                'tts': names.get(c.get('tts', ''), c.get('tts', '')),
+                'target_language': c.get('target_language'), 'rewrite_enabled': c.get('rewrite_enabled'),
+                'pronunciations': len(c.get('pronunciations') or []),
+            } for c in config.get('characters') or []],
+            'global_pronunciations': len(config.get('pronunciations') or []),
+        }
+
+    @server.tool(annotations=write)
+    def use_character(character: str) -> dict[str, Any]:
+        """切换到角色卡（按 ID 或名称匹配）：一并切换参考音色、TTS、人设风格、目标语言、情绪强度与角色专属读音。监听中可切换，下一句生效。"""
+        q = character.strip().lower()
+        cards = bridge.call('GET', '/config').get('characters') or []
+        exact = [c for c in cards if c['id'].lower() == q or c['name'].lower() == q]
+        found = exact or [c for c in cards if q and (q in c['id'].lower() or q in c['name'].lower())]
+        if not found:
+            raise ToolError(f'未找到角色卡：{character}')
+        if len(found) > 1:
+            raise ToolError('角色卡有多个匹配：' + '、'.join(f"{c['id']}（{c['name']}）" for c in found) + '；请改用完整 ID')
+        result = bridge.call('POST', f"/characters/{found[0]['id']}/apply")
+        active = result['config']['active']
+        return {'character': found[0]['name'], 'tts': active['tts'], 'reference': active['reference'],
+                'warnings': result.get('warnings', [])}
+
+    @server.tool(annotations=read)
+    def preview_pronunciation(text: str, tts: str = '') -> dict[str, Any]:
+        """预览读音词典替换后实际送给 TTS 的文本（全局词条 + 当前角色卡词条）；tts 为空时用当前 TTS。"""
+        return bridge.call('POST', '/pronunciations/preview', json={'text': text, 'provider': tts})
 
     @server.tool(annotations=read)
     def list_models(kind: str = '') -> dict[str, Any]:
