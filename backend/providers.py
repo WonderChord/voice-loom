@@ -316,8 +316,12 @@ def _request(provider, method, path, **kwargs):
         if registered and local_runtime.RUNTIMES[registered].get('imported'):
             _ensure(provider, cancel_check=cancel_check)
         with _http_session(loopback) as session:
+            timeout = kwargs.pop("timeout", (5, 180))
+            if not loopback and isinstance(timeout, tuple):
+                # 云端隧道与跨境链路的首次握手常超过 5 秒。
+                timeout = (max(timeout[0], 20), timeout[1])
             response = session.request(method, url, headers=_headers(provider),
-                                       timeout=kwargs.pop("timeout", (5, 180)), allow_redirects=False, **kwargs)
+                                       timeout=timeout, allow_redirects=False, **kwargs)
     except requests.Timeout:
         raise ProviderError("模型请求超时，请检查服务状态后重新提交。") from None
     except requests.RequestException:

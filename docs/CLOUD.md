@@ -2,6 +2,22 @@
 
 声织在副机上运行，TTS 模型放在云端 GPU 实例（如 Google Cloud）。声织按普通 HTTPS 服务调用云端实例；只有 `localhost` / `127.0.0.1` 地址会由声织启动和管理。
 
+## Colab L4 一键启动（已验证）
+
+`deploy/colab/` 里的脚本放到 Google Drive 的 `MyDrive/VoiceLoom_Cloud/`，Colab 选 L4 GPU 后运行：
+
+```python
+from google.colab import drive
+drive.mount('/content/drive')
+!bash /content/drive/MyDrive/VoiceLoom_Cloud/launch.sh
+```
+
+- 首次运行在 L4 上编译 Breeze-TTS-2.cpp（CUDA，约 8 分钟），并从 Hugging Face 下载 GGUF。编译产物、模型、预置音色和密钥都存在 Drive 里，之后换新运行时约 1 分钟就能起来。
+- 输出的 `TTS_URL` 是 cloudflared 临时隧道地址（每次启动都会变）；`api_key.txt` 首次随机生成，之后一直沿用。声织「模型连接」里把 Breeze 的服务地址改成 `TTS_URL`，API 密钥填 `api_key.txt` 的内容。
+- `auth_proxy.py` 校验 `Authorization: Bearer` 后转发给只监听 `127.0.0.1` 的 Breeze；隧道提供 HTTPS。
+- 2026-11-01 实测（副机 → Cloudflare 隧道 → L4）：建连约 5 秒（声织对远端地址的连接超时为 20 秒）；热身后合成 2～6 秒的句子，耗时约等于音频时长；预置音色在换新运行时后仍然可用。
+- Colab 空闲时会回收运行时，开播前运行一次即可。
+
 ## 参考音色：两种用法
 
 | 用法 | 声织里怎么填 | 每句请求发送 |
