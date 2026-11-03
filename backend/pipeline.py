@@ -15,10 +15,19 @@ import uuid
 from urllib.parse import urlsplit
 
 from .models import Config, Plan
-from . import language
+from . import hotkeys, language
 from .energy import check_file_energy
 from .store import Store
 from .subtitles import SubtitleHub
+from .usage import UsageLog
+
+
+def audio_seconds(path) -> float:
+    try:
+        import soundfile
+        return round(float(soundfile.info(str(path)).duration), 3)
+    except Exception:
+        return 0.0
 
 
 def now():
@@ -41,11 +50,16 @@ def validate_listening_config(config: dict, reference: dict | None) -> None:
         audit_provider = next((p for p in config["providers"] if p["id"] == audit_id and p["kind"] == "llm"), None)
         if audit_provider is not None:
             selected["audit_llm"] = audit_provider
+    fallback_id = config["active"].get("tts_fallback") or ""
+    if fallback_id and fallback_id != config["active"]["tts"]:
+        fallback = next((p for p in config["providers"] if p["id"] == fallback_id and p["kind"] == "tts"), None)
+        if fallback is not None:
+            selected["tts_fallback"] = fallback
     for category, provider in selected.items():
         if category in {"llm", "audit_llm"} and not language.requires_llm(config):
             continue
         kind = provider["type"]
-        label = provider["name"]
+        label = ("备用 TTS " if category == "tts_fallback" else "") + provider["name"]
         if kind in {"openai_asr", "openai_llm", "openai_tts"}:
             if not str(provider.get("base_url", "")).strip():
                 raise ValueError(f"{label} 缺少服务地址，请先在模型设置中填写")
@@ -99,10 +113,12 @@ class Job:
     reference_id: str = ""
     future: Future | None = None
     started: float = field(default_factory=time.monotonic)
+    tts_revision: int = 0
+    usage_session: str = ""
 
 
 class Pipeline:
-    def __init__(self, store: Store, providers=None, audio_factory=None):
+    def __init__(self, store: Store, providers=None, audio_factory=None, hotkey_factory=None):
         if providers is None:
             from . import providers
         if audio_factory is None:
@@ -129,7 +145,15 @@ class Pipeline:
         self.last_skip_reason = ""
         self.dropped_audio_count = 0
         self.tts_remote: dict | None = None
+        self.tts_failover: dict | None = None
+        self.tts_revision = 0
+        self.probe_generation = None
         self.probe_thread: threading.Thread | None = None
+        self.usage = UsageLog(store.root / "usage.json")
+        self.hotkeys = (hotkey_factory or hotkeys.create)(self.hotkey)
+        self.hotkey_binding: dict[str, str] = {}
+        self.hotkey_status: dict[str, dict] = {}
+        self.hotkey_config_lock = threading.Lock()
         self.logs = deque(maxlen=200)
         self.logs_revision = 1
         self.history: list[dict] = []
@@ -154,15 +178,20 @@ class Pipeline:
             self.subtitles.start()
             self.worker = threading.Thread(target=self._work, name="voice-loom-pipeline", daemon=True)
             self.worker.start()
+        self._configure_hotkeys(self.store.config())
 
     def close(self):
-        self.stop()
-        self.subtitles.close()
         with self.condition:
             self.closed = True
             self.condition.notify_all()
+        with self.hotkey_config_lock:
+            self.hotkeys.close()
+            self.hotkey_binding, self.hotkey_status = {}, {}
+        self.stop()
+        self.subtitles.close()
         if self.worker:
             self.worker.join(timeout=2)
+        self.usage.close()
 
     def safe_error(self, error) -> str:
         message = str(error) or type(error).__name__
@@ -224,6 +253,9 @@ class Pipeline:
                 "last_skip_reason": self.last_skip_reason,
                 "dropped_audio_count": self.dropped_audio_count,
                 "tts_remote": dict(self.tts_remote) if self.tts_remote else None,
+                "tts_failover": ({k: v for k, v in self.tts_failover.items() if k != "retry_at"}
+                                 if self.tts_failover else None),
+                "hotkeys": copy.deepcopy(self.hotkey_status),
                 "uptime_s": round(time.monotonic() - self.started, 1),
             }
             if records is not None:
@@ -236,9 +268,64 @@ class Pipeline:
         with self.control_lock, self.lock:
             if self.listening and config.audio.model_dump() != self.store.config()["audio"]:
                 raise BusyError("请先停止监听，再修改音频设备或断句设置")
+            previous = self.store.config(decrypted=True)
             saved = self.store.save_config(config)
             self.subtitles.configure(saved["subtitles"])
-            return saved
+            self._refresh_tts_config(previous)
+        if self.worker:
+            self._configure_hotkeys(saved)
+        return saved
+
+    def _configure_hotkeys(self, config: dict):
+        with self.hotkey_config_lock:
+            if not self.closed:
+                self._register_hotkeys(self.store.config())
+
+    def _register_hotkeys(self, config: dict):
+        binding = hotkeys.bindings(config)
+        if binding == self.hotkey_binding and all(s["ok"] for s in self.hotkey_status.values()):
+            return
+        status = self.hotkeys.configure(binding)
+        with self.lock:
+            self.hotkey_binding, self.hotkey_status = binding, status
+        failed = [f"{item['key']}：{item['message']}" for item in status.values() if not item["ok"]]
+        if failed:
+            self.log("warning", "部分全局快捷键未生效 —— " + "；".join(failed))
+        elif binding:
+            self.log("info", f"全局快捷键已启用（{len(binding)} 个）")
+
+    def hotkey(self, action: str):
+        """全局快捷键入口，在快捷键线程里调用；失败写日志，不抛出。"""
+        try:
+            with self.control_lock:
+                if not self.closed:
+                    self._dispatch_hotkey(action)
+        except Exception as exc:
+            self.log("warning", f"快捷键操作失败：{self.safe_error(exc)}")
+
+    def _dispatch_hotkey(self, action: str):
+        if action == "toggle_listen":
+            if self.listening:
+                self.stop()
+            else:
+                self.listen()
+        elif action == "flush":
+            self.flush()
+            self.log("info", "快捷键：立即处理当前语音")
+        elif action == "stop_playback":
+            self.stop_playback()
+            self.log("info", "快捷键：已停止播放")
+        elif action in {"next_character", "previous_character"}:
+            config = self.store.config()
+            ids = [card["id"] for card in config.get("characters") or []]
+            if not ids:
+                raise ValueError("还没有角色卡")
+            step = 1 if action == "next_character" else -1
+            current = config.get("active_character")
+            index = (ids.index(current) + step) % len(ids) if current in ids else (0 if step > 0 else len(ids) - 1)
+            self.apply_character(ids[index])
+        elif action.startswith("character:"):
+            self.apply_character(action.split(":", 1)[1])
 
     def apply_character(self, character_id: str) -> dict:
         """切换角色卡：把卡上的音色、TTS、人设、语言和情绪强度写入当前设置；监听中也可切换，下一句生效。"""
@@ -259,8 +346,10 @@ class Pipeline:
                     value["active"]["reference"] = card["reference"]
                 else:
                     notes.append("角色卡的参考语音已删除，保留当前音色")
+            previous = self.store.config(decrypted=True)
             saved = self.store.save_config(Config.model_validate(value))
             self.subtitles.configure(saved["subtitles"])
+            self._refresh_tts_config(previous)
         self.log("info", f"已切换到角色卡「{card['name']}」" + ("；" + "；".join(notes) if notes else ""))
         return {"config": saved, "warnings": notes}
 
@@ -283,6 +372,21 @@ class Pipeline:
             self._start_remote_probe()
 
     REMOTE_PROBE_INTERVAL_S = 240
+    # 已切到备用 TTS 时更频繁地探测主 TTS，恢复后下一句立即切回。
+    FAILOVER_PROBE_S = 30
+    FAILOVER_RETRY_S = 60
+
+    def _refresh_tts_config(self, previous):
+        def selected(config):
+            return [next((p for p in config["providers"] if p["id"] == config["active"].get(key)), None)
+                    for key in ("tts", "tts_fallback")]
+        if selected(previous) != selected(self.store.config(decrypted=True)):
+            self.tts_revision += 1
+            self.tts_failover = None
+            self.tts_remote = None
+            self.condition.notify_all()
+            if self.listening:
+                self._start_remote_probe()
 
     def _remote_tts(self):
         config = self.store.config(decrypted=True)
@@ -297,22 +401,33 @@ class Pipeline:
     def _start_remote_probe(self):
         """监听期间定时探测云端自部署 TTS：开播即建立连接，工作台显示可达状态与往返耗时。"""
         with self.lock:
-            if self.probe_thread and self.probe_thread.is_alive():
+            generation = (self.generation, self.tts_revision)
+            if self.probe_thread and self.probe_thread.is_alive() and self.probe_generation == generation:
                 return
             if self._remote_tts() is None:
                 self.tts_remote = None
                 return
-            self.probe_thread = threading.Thread(target=self._probe_loop, args=(self.generation,),
+            self.probe_generation = generation
+            self.probe_thread = threading.Thread(target=self._probe_loop, args=generation,
                                                  name="voice-loom-tts-probe", daemon=True)
             self.probe_thread.start()
 
-    def _probe_loop(self, generation):
+    def _probe_loop(self, generation, revision=None):
+        revision = self.tts_revision if revision is None else revision
         def stopped():
-            return self.closed or not self.listening or self.generation != generation
+            return self.closed or not self.listening or self.generation != generation or self.tts_revision != revision
+        last = None
         while True:
             with self.condition:
                 if stopped():
                     return
+            interval = self.FAILOVER_PROBE_S if self.tts_failover else self.REMOTE_PROBE_INTERVAL_S
+            waited = None if last is None else time.monotonic() - last
+            if waited is not None and waited < interval:
+                with self.condition:
+                    self.condition.wait_for(stopped, timeout=min(self.FAILOVER_PROBE_S, interval - waited))
+                continue
+            last = time.monotonic()
             provider = self._remote_tts()
             if provider is None:
                 with self.lock:
@@ -322,18 +437,25 @@ class Pipeline:
             try:
                 result = self.providers.test_provider(provider)
             except Exception as exc:
-                result = {"ok": False, "message": str(exc)}
+                check = getattr(self.providers, "is_unavailable", lambda _: False)
+                result = {"ok": False, "message": str(exc), "unavailable": check(exc)}
             status = {"provider": provider["name"], "ok": bool(result.get("ok")),
                       "rtt_ms": round((time.monotonic() - started) * 1000), "checked_at": now(),
                       "message": self.safe_error(result.get("message", ""))}
             with self.lock:
+                if stopped():
+                    return
                 previous = self.tts_remote
                 self.tts_remote = status
+                if status["ok"]:
+                    self._recover_tts(provider, revision)
+                elif result.get("unavailable"):
+                    fallback = self._fallback_tts(self.store.config(decrypted=True), provider["id"])
+                    if fallback:
+                        self._fail_over(provider, fallback, status["message"], revision, retry=False)
             if not previous or previous["ok"] != status["ok"]:
                 text = f"已连通，往返 {status['rtt_ms']} 毫秒" if status["ok"] else "无法连接：" + status["message"]
                 self.log("info" if status["ok"] else "warning", f"云端 TTS {status['provider']} {text}")
-            with self.condition:
-                self.condition.wait_for(stopped, timeout=self.REMOTE_PROBE_INTERVAL_S)
 
     def stop(self):
         with self.control_lock:
@@ -388,6 +510,7 @@ class Pipeline:
             self.skipped_audio_count = 0
             self.last_skip_reason = ""
             self.subtitles.clear("new_session")
+            self.usage.reset_session()
         self.log("info", "新会话已开始，上下文与记录已清空，已有音频保留")
 
     def _snapshot(self, job_id, preview=False):
@@ -427,7 +550,8 @@ class Pipeline:
             config["target_language"] = target_language
             if plan is not None:
                 plan = {**copy.deepcopy(plan), "target_language": target_language}
-            job = Job(job_id, self.generation, config, reference, text, path, plan, preview)
+            job = Job(job_id, self.generation, config, reference, text, path, plan, preview,
+                      tts_revision=self.tts_revision, usage_session=self.usage.session_id)
             record = {"id": job_id, "created_at": now(), "status": "queued", "source_text": text, "text": "", "target_language": target_language, "plan": None, "audio_url": None, "error": None, "elapsed_ms": 0, "origin": origin, "preview_only": preview, "context_member": False}
             if parent_id:
                 record["parent_id"] = parent_id
@@ -460,7 +584,8 @@ class Pipeline:
             copy_path = self.store.runs / f"{job_id}_reference.wav"
             shutil.copy2(reference["path"], copy_path)
             future = Future()
-            job = Job(job_id, self.generation, self.store.config(True), path=copy_path, mode="reference", reference_id=reference_id, future=future)
+            job = Job(job_id, self.generation, self.store.config(True), path=copy_path, mode="reference", reference_id=reference_id, future=future,
+                      usage_session=self.usage.session_id)
             self.jobs.append(job)
             self.condition.notify()
         return future.result(timeout=300)
@@ -521,6 +646,76 @@ class Pipeline:
         provider["_cancel_check"] = lambda: self._guard(job)
         return provider
 
+    def _fallback_tts(self, config, primary_id):
+        fallback_id = config["active"].get("tts_fallback") or ""
+        if not fallback_id or fallback_id == primary_id:
+            return None
+        return next((p for p in config["providers"] if p["id"] == fallback_id and p["kind"] == "tts"), None)
+
+    def _fail_over(self, primary, fallback, reason, revision=None, *, retry=True):
+        reason = self.safe_error(reason)
+        with self.lock:
+            if revision is not None and revision != self.tts_revision:
+                return
+            current = self.tts_failover
+            retry_at = time.monotonic() + self.FAILOVER_RETRY_S
+            if current and current["primary"] == primary["id"]:
+                if retry:
+                    current["retry_at"] = retry_at
+                return
+            self.tts_failover = {"primary": primary["id"], "primary_name": primary["name"],
+                                 "fallback": fallback["id"], "fallback_name": fallback["name"],
+                                 "since": now(), "reason": reason, "retry_at": retry_at}
+        self.log("warning", f"主 TTS {primary['name']} 无法连接（{reason}），"
+                            f"之后的句子改用备用 TTS {fallback['name']}；主 TTS 恢复后自动切回")
+
+    def _recover_tts(self, primary, revision=None):
+        with self.lock:
+            if revision is not None and revision != self.tts_revision:
+                return
+            current = self.tts_failover
+            if not current or current["primary"] != primary["id"]:
+                return
+            self.tts_failover = None
+        self.log("info", f"主 TTS {primary['name']} 已恢复，切回主 TTS")
+
+    def _synthesize(self, job, plan, output):
+        """主 TTS 不可达时改用备用 TTS；返回 (合成结果, 实际使用的服务, 是否用了备用)。"""
+        primary = self._selected(job, "tts")
+        fallback = self._fallback_tts(job.config, primary["id"])
+        if fallback:
+            fallback = copy.deepcopy(fallback)
+            fallback["_cancel_check"] = primary["_cancel_check"]
+        with self.lock:
+            failover = self.tts_failover
+            skip_primary = bool(fallback and failover and failover["primary"] == primary["id"]
+                                and failover["fallback"] == fallback["id"] and job.tts_revision == self.tts_revision
+                                and time.monotonic() < failover["retry_at"])
+        if not skip_primary:
+            try:
+                result = self.providers.synthesize(primary, plan, job.reference, output, job.config)
+            except Exception as exc:
+                unavailable = getattr(self.providers, "is_unavailable", None)
+                if not fallback or not callable(unavailable) or not unavailable(exc):
+                    raise
+                with self.lock:
+                    self._guard(job)
+                    self._fail_over(primary, fallback, str(exc), job.tts_revision)
+            else:
+                with self.lock:
+                    self._guard(job)
+                    self._recover_tts(primary, job.tts_revision)
+                return result, primary, False
+        result = self.providers.synthesize(fallback, plan, job.reference, output, job.config)
+        note = f"主 TTS {primary['name']} 不可达，本句由备用 TTS {fallback['name']} 合成"
+        if note not in plan["warnings"]:
+            plan["warnings"].append(note)
+        self.log("warning", note)
+        return result, fallback, True
+
+    def _record_usage(self, job, provider, entry):
+        self.usage.record(provider, entry, session_id=job.usage_session)
+
     def _remember(self, source, text):
         if source.strip() and text.strip():
             self.history.extend([{"role": "user", "content": source}, {"role": "assistant", "content": text}])
@@ -554,7 +749,9 @@ class Pipeline:
             return
         if job.mode == "reference":
             self._stage(job, "asr")
-            text = self.providers.transcribe(self._selected(job, "asr"), job.path)
+            asr = self._selected(job, "asr")
+            self._record_usage(job, asr, {"input_s": audio_seconds(job.path)})
+            text = self.providers.transcribe(asr, job.path)
             with self.lock:
                 self._guard(job)
                 result = self.store.patch_reference(job.reference_id, {"transcript": text})
@@ -565,7 +762,9 @@ class Pipeline:
         source = job.source_text
         if job.path:
             self._stage(job, "asr")
-            source = self.providers.transcribe(self._selected(job, "asr"), job.path).strip()
+            asr = self._selected(job, "asr")
+            self._record_usage(job, asr, {"input_s": audio_seconds(job.path)})
+            source = self.providers.transcribe(asr, job.path).strip()
             self._update(job, source_text=source)
         if not source.strip():
             raise ValueError("未识别到有效语音，请检查输入音量与参考录音")
@@ -610,12 +809,14 @@ class Pipeline:
         if not job.preview:
             self._stage(job, "tts")
             output = self.store.runs / f"{job.id}.wav"
-            result = self.providers.synthesize(self._selected(job, "tts"), plan, job.reference, output, job.config)
+            result, used, fell_back = self._synthesize(job, plan, output)
             with self.lock:
                 self._guard(job)
             path = Path(result["path"]).resolve()
             if not path.is_relative_to(self.store.runs) or not path.is_file():
                 raise ValueError("合成器未返回有效的本机音频")
+            spoken = sum(len(seg.get("text") or "") for seg in plan["segments"] if seg["kind"] == "speech")
+            self._record_usage(job, used, {"chars": spoken, "audio_s": audio_seconds(path), "fallbacks": int(fell_back)})
             audio_url = self.store.audio_url(path)
             for warning in result.get("warnings", []):
                 if warning not in plan["warnings"]:
@@ -655,6 +856,7 @@ class Pipeline:
         return False
 
     def _work(self):
+        sink = getattr(self.providers, "usage_sink", None)
         while True:
             with self.condition:
                 while not self.closed and not self.jobs:
@@ -664,6 +866,8 @@ class Pipeline:
                 job = self.jobs.popleft()
                 self.active = job
                 job.started = time.monotonic()
+            # 每个任务保留提交时的会话；已取消的云请求返回后仍计入历史用量。
+            token = sink.set(lambda provider, entry: self._record_usage(job, provider, entry)) if sink is not None else None
             try:
                 self._run(job)
             except Cancelled:
@@ -685,6 +889,8 @@ class Pipeline:
                             job.future.set_exception(ValueError(error))
                         self.log("error", error)
             finally:
+                if sink is not None:
+                    sink.reset(token)
                 if job.reference:
                     Path(job.reference["path"]).unlink(missing_ok=True)
                 if job.mode == "reference" and job.path:

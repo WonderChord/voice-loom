@@ -28,6 +28,7 @@ with tempfile.TemporaryDirectory() as bootstrap_dir:
         else:
             os.environ["VOICE_LOOM_DATA"] = previous_data_dir
 from backend.store import Store
+from backend.hotkeys import NullHotkeys
 import backend.app as app_module
 import backend.store as store_module
 
@@ -114,7 +115,7 @@ class ServiceTests(unittest.TestCase):
     def setUp(self):
         self.folder = tempfile.TemporaryDirectory()
         self.providers = FakeProviders()
-        self.app = create_app(self.folder.name, providers=self.providers, audio_factory=FakeAudio, devices_fn=lambda: {"inputs": [], "outputs": [], "default_input": None, "default_output": None}, seed_reference=False)
+        self.app = create_app(self.folder.name, providers=self.providers, audio_factory=FakeAudio, hotkey_factory=NullHotkeys, devices_fn=lambda: {"inputs": [], "outputs": [], "default_input": None, "default_output": None}, seed_reference=False)
         self.client = TestClient(self.app, base_url="http://127.0.0.1:17861", client=("127.0.0.1", 50000), headers={"Authorization": "Bearer " + self.app.state.access.browser_session})
         self.client.__enter__()
 

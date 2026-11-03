@@ -67,6 +67,41 @@ export interface Character {
   target_language: TargetLanguage;
   emotion_intensity: number;
   pronunciations: Pronunciation[];
+  hotkey: string;
+}
+export interface Hotkeys {
+  enabled: boolean;
+  toggle_listen: string;
+  flush: string;
+  stop_playback: string;
+  next_character: string;
+  previous_character: string;
+}
+export interface HotkeyStatus {
+  key: string;
+  ok: boolean;
+  message: string;
+}
+export interface UsageRow {
+  id: string;
+  name: string;
+  kind: Kind;
+  type: string;
+  requests: number;
+  failures: number;
+  tokens_in: number;
+  tokens_out: number;
+  chars: number;
+  audio_s: number;
+  input_s: number;
+  fallbacks: number;
+}
+export interface UsageSummary {
+  days: number;
+  session_started: string;
+  session: UsageRow[];
+  providers: UsageRow[];
+  save_error?: string;
 }
 export interface StylePreset {
   id: string;
@@ -77,7 +112,8 @@ export interface StylePreset {
 }
 export interface Config {
   providers: Provider[];
-  active: { asr: string; llm: string; audit_llm?: string; tts: string; reference: string };
+  active: { asr: string; llm: string; audit_llm?: string; tts: string; tts_fallback: string; reference: string };
+  hotkeys: Hotkeys;
   default_asr: string;
   persona: string;
   prompt: string;
@@ -211,6 +247,8 @@ export interface Runtime {
   last_skip_reason?: string | null;
   dropped_audio_count?: number;
   tts_remote?: { provider: string; ok: boolean; rtt_ms: number; checked_at: string; message: string } | null;
+  tts_failover?: { primary: string; primary_name: string; fallback: string; fallback_name: string; since: string; reason: string } | null;
+  hotkeys?: Record<string, HotkeyStatus>;
 }
 export interface Device {
   id: number;

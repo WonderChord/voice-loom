@@ -32,6 +32,8 @@ import {
 } from "./types";
 import { Field, Toggle, Modal, AudioPreview } from "./components";
 import { EntryCard } from "./Dashboard";
+import { HotkeyField } from "./HotkeyField";
+import { UsagePanel } from "./UsagePanel";
 type Run = (fn: () => Promise<unknown>) => void;
 type Notify = (text: string, error?: boolean) => void;
 type Change = (patch: Partial<Config>) => void;
@@ -721,7 +723,7 @@ export function ModelsPage({
               className="icon danger-text"
               title="删除此连接"
               aria-label="删除模型连接"
-              disabled={config.active[kind] === provider.id || config.default_asr === provider.id}
+              disabled={config.active[kind] === provider.id || config.default_asr === provider.id || config.active.tts_fallback === provider.id}
               onClick={() => {
                 change({
                   providers: config.providers.filter((p) => p.id !== provider.id),
@@ -827,12 +829,14 @@ export function DevicesPage({
   change,
   refresh,
   listening,
+  hotkeyStatus,
 }: {
   config: Config;
   devices: Devices;
   change: Change;
   refresh: () => void;
   listening: boolean;
+  hotkeyStatus: Runtime["hotkeys"];
 }) {
   const audio = config.audio;
   const update = (p: Partial<Config["audio"]>) => change({ audio: { ...audio, ...p } });
@@ -849,6 +853,30 @@ export function DevicesPage({
         </button>
       </div>
       {listening && <div className="notice">正在监听。请先停止监听，再保存音频设置。</div>}
+      <section className="card settings-card">
+        <h2>全局快捷键</h2>
+        <Toggle label="启用全局快捷键" value={config.hotkeys.enabled}
+          note="工作台在后台也能响应，保存设置后生效。改键前可关闭并保存，避免触发已有动作。"
+          onChange={(enabled) => change({ hotkeys: { ...config.hotkeys, enabled } })} />
+        <div className="form-grid">
+          {([
+            ["toggle_listen", "开始 / 停止监听"], ["flush", "立即处理当前语音"],
+            ["stop_playback", "停止播放"], ["next_character", "下一张角色卡"],
+            ["previous_character", "上一张角色卡"],
+          ] as const).map(([action, label]) => <HotkeyField key={action} label={label}
+            value={config.hotkeys[action]} enabled={config.hotkeys.enabled} status={hotkeyStatus?.[action]}
+            onChange={(key) => change({ hotkeys: { ...config.hotkeys, [action]: key } })} />)}
+        </div>
+        <p className="hint">点击输入框后按组合键，也可右键粘贴 Ctrl+Alt+F9 这样的写法。单键支持 F13–F24、Pause、ScrollLock；角色专属快捷键在「角色卡与读音」中设置。</p>
+        {config.characters.filter((card) => card.hotkey).map((card) => {
+          const status = hotkeyStatus?.[`character:${card.id}`];
+          const applied = config.hotkeys.enabled && status?.key === card.hotkey;
+          return <div className="hotkey-character-status" key={card.id}>
+            <span>{card.name} · <kbd>{card.hotkey}</kbd></span>
+            <small className={applied && !status.ok ? "error-text" : "muted"}>{!config.hotkeys.enabled ? "快捷键已关闭" : !applied ? "保存后生效" : status.ok ? "已生效" : status.message}</small>
+          </div>;
+        })}
+      </section>
       <div className="prompt-grid">
         {(["input", "output"] as const).map((k) => (
           <section className="card settings-card" key={k}>
@@ -1103,8 +1131,11 @@ export function HistoryPage({
           <button className={tab === "logs" ? "active" : ""} onClick={() => setTab("logs")}>
             运行日志
           </button>
+          <button className={tab === "usage" ? "active" : ""} onClick={() => setTab("usage")}>
+            用量统计
+          </button>
         </div>
-        <div className="search-box">
+        {tab !== "usage" && <div className="search-box">
           <Search size={16} />
           <input
             aria-label="搜索记录"
@@ -1112,9 +1143,9 @@ export function HistoryPage({
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
-        </div>
+        </div>}
       </div>
-      <section className="card history-card">
+      {tab === "usage" ? <UsagePanel /> : <section className="card history-card">
         {tab === "records" ? (
           runtime.records
             .filter((r) => `${r.source_text}${r.text}${r.error || ""}`.includes(query))
@@ -1142,7 +1173,7 @@ export function HistoryPage({
             <p>运行后，记录会出现在这里。</p>
           </div>
         )}
-      </section>
+      </section>}
     </>
   );
 }

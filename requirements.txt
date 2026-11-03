@@ -11,4 +11,4 @@ sounddevice>=0.5.0,<1
 soundfile>=0.12.1,<1
 webrtcvad-wheels>=2.0.14,<3
 mcp==2.3.0
-filelock>=3.20,<4
+filelock>=4.2.1,<5

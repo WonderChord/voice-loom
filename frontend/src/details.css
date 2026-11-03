@@ -415,3 +415,60 @@
 .pron-row input[type="checkbox"] {
   justify-self: center;
 }
+.hotkey-field label {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.hotkey-feedback, .hotkey-character-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.hotkey-feedback .text-button {
+  padding: 2px 0;
+  font-size: 12px;
+}
+.hotkey-character-status {
+  padding: 10px 0;
+  border-top: 1px solid var(--border);
+}
+.failover-banner {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 16px;
+  overflow-wrap: anywhere;
+}
+.usage-scroll {
+  overflow-x: auto;
+}
+.usage-card {
+  min-width: 0;
+  margin-bottom: 18px;
+}
+.usage-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.usage-table th, .usage-table td {
+  padding: 13px 10px;
+  border-bottom: 1px solid var(--border);
+  text-align: right;
+  white-space: nowrap;
+}
+.usage-table th:first-child {
+  text-align: left;
+  min-width: 120px;
+  max-width: 220px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.usage-table small {
+  display: block;
+  font-weight: 400;
+  color: var(--muted);
+}

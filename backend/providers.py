@@ -19,6 +19,7 @@ from types import SimpleNamespace
 from urllib.parse import quote, urlsplit
 
 from contextlib import contextmanager
+from contextvars import ContextVar
 import numpy as np
 import requests
 import soundfile as sf
@@ -69,6 +70,41 @@ class ProviderHTTPError(ProviderError):
     def __init__(self, message: str, status: int):
         super().__init__(message)
         self.status = status
+
+
+class ProviderUnavailableError(ProviderError):
+    """服务不可达：超时、连不上，或隧道/网关报 5xx。可以改用备用服务重试。"""
+
+
+# 网关类状态码：cloudflared 隧道失效 530、源站不可达 52x、反代 502/504、模型未就绪 503。
+UNAVAILABLE_STATUSES = {502, 503, 504, *range(520, 531)}
+
+
+def is_unavailable(exc: BaseException) -> bool:
+    return isinstance(exc, ProviderUnavailableError) or (
+        isinstance(exc, ProviderHTTPError) and exc.status in UNAVAILABLE_STATUSES)
+
+
+# 用量记录回调，由流水线在处理任务的线程里设置；探活等后台请求不计入。
+usage_sink: ContextVar = ContextVar("voice_loom_usage_sink", default=None)
+
+
+def _record_usage(provider, path, response=None, failed=False):
+    sink = usage_sink.get()
+    if sink is None:
+        return
+    entry = {"requests": 1, "failures": 1 if failed else 0}
+    if response is not None and path.endswith("/chat/completions"):
+        try:
+            usage = response.json().get("usage") or {}
+            entry["tokens_in"] = int(usage.get("prompt_tokens") or usage.get("input_tokens") or 0)
+            entry["tokens_out"] = int(usage.get("completion_tokens") or usage.get("output_tokens") or 0)
+        except (ValueError, TypeError, AttributeError):
+            pass
+    try:
+        sink(provider, entry)
+    except Exception:
+        pass
 
 
 class ProviderReviewRequired(ProviderError):
@@ -306,6 +342,16 @@ def _headers(provider):
 
 
 def _request(provider, method, path, **kwargs):
+    try:
+        response = _send(provider, method, path, **kwargs)
+    except ProviderError:
+        _record_usage(provider, path, failed=True)
+        raise
+    _record_usage(provider, path, response)
+    return response
+
+
+def _send(provider, method, path, **kwargs):
     url = _endpoint(provider, path)
     cancel_check = kwargs.pop("cancel_check", None)
     if callable(cancel_check):
@@ -323,9 +369,9 @@ def _request(provider, method, path, **kwargs):
             response = session.request(method, url, headers=_headers(provider),
                                        timeout=timeout, allow_redirects=False, **kwargs)
     except requests.Timeout:
-        raise ProviderError("模型请求超时，请检查服务状态后重新提交。") from None
+        raise ProviderUnavailableError("模型请求超时，请检查服务状态后重新提交。") from None
     except requests.RequestException:
-        raise ProviderError("无法连接模型服务，请检查服务地址与网络。") from None
+        raise ProviderUnavailableError("无法连接模型服务，请检查服务地址与网络。") from None
     if not 200 <= response.status_code < 300:
         if (response.status_code == 500 and provider.get("type") == "drama3_local"
                 and _base(provider) == local_runtime.RUNTIMES["drama3_full"]["url"]
@@ -1348,6 +1394,6 @@ def test_provider(provider: dict) -> dict:
         response.json()
         return {"ok": True, "message": "服务接口连接成功；未执行生成。"}
     except ProviderError as exc:
-        return {"ok": False, "message": str(exc)}
+        return {"ok": False, "message": str(exc), "unavailable": is_unavailable(exc)}
     except (ValueError, TypeError):
         return {"ok": False, "message": "服务返回了无效的模型信息。"}

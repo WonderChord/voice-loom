@@ -341,6 +341,11 @@ export function Dashboard({
       </section>
       <div className="studio-grid">
         <div className="studio-main">
+          {runtime.tts_failover && <div className="notice failover-banner" role="status">
+            <b>正在使用备用 TTS · {runtime.tts_failover.fallback_name}</b>
+            <span>主 TTS {runtime.tts_failover.primary_name} 不可达，自 {new Date(runtime.tts_failover.since).toLocaleTimeString("zh-CN")} 起自动切换；恢复后切回。</span>
+            <small>{runtime.tts_failover.reason}</small>
+          </div>}
           <section className="card input-card">
             <div className="card-heading">
               <h2>
@@ -626,6 +631,17 @@ export function Dashboard({
                 </select>
               </div>
             ))}
+            <div className="compact-field">
+              <label htmlFor="quick-tts-fallback">备用 TTS</label>
+              <select id="quick-tts-fallback" value={config.active.tts_fallback || ""} disabled={busy}
+                onChange={(e) => quick({ active: { ...config.active, tts_fallback: e.target.value } })}>
+                <option value="">不启用</option>
+                {config.providers.filter((p) => p.kind === "tts").map((p) => (
+                  <option key={p.id} value={p.id} disabled={p.id === config.active.tts}>{p.name}{p.id === config.active.tts ? "（当前主 TTS）" : ""}</option>
+                ))}
+              </select>
+            </div>
+            <p className="hint">备用推荐 Fish / ElevenLabs / OpenAI 等云端 API。先在模型连接保存密钥，并在参考音色中绑定该服务的声音 ID。</p>
             <div className="inspector-divider" />
             <Field label="目标语言（LLM翻译）" note="保留原意、称呼和人称。">
               <select

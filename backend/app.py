@@ -17,7 +17,7 @@ import re
 
 import numpy as np
 import soundfile as sf
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response, StreamingResponse
 from starlette.concurrency import run_in_threadpool
@@ -177,9 +177,9 @@ async def save_audio(upload: UploadFile, directory: Path, max_seconds: int, name
     return await run_in_threadpool(normalize)
 
 
-def create_app(data_dir: str | Path | None = None, *, providers=None, audio_factory=None, devices_fn=None, vault=None, seed_reference=True) -> FastAPI:
+def create_app(data_dir: str | Path | None = None, *, providers=None, audio_factory=None, hotkey_factory=None, devices_fn=None, vault=None, seed_reference=True) -> FastAPI:
     store = Store(data_dir or os.environ.get("VOICE_LOOM_DATA") or ROOT / "data", vault=vault, seed_reference=seed_reference)
-    pipeline = Pipeline(store, providers=providers, audio_factory=audio_factory)
+    pipeline = Pipeline(store, providers=providers, audio_factory=audio_factory, hotkey_factory=hotkey_factory)
     access = LocalAccess(store.root, store.vault)
 
     @asynccontextmanager
@@ -190,7 +190,7 @@ def create_app(data_dir: str | Path | None = None, *, providers=None, audio_fact
         from .sensevoice_client import close as close_sense_worker
         await run_in_threadpool(close_sense_worker)
 
-    app = FastAPI(title="声织 · 本机语音工作台", version="1.2.1", lifespan=lifespan, docs_url="/api/docs", openapi_url="/api/openapi.json", redoc_url=None)
+    app = FastAPI(title="声织 · 本机语音工作台", version="1.3.0", lifespan=lifespan, docs_url="/api/docs", openapi_url="/api/openapi.json", redoc_url=None)
     app.add_middleware(LocalOnlyMiddleware, access=access)
     app.state.store = store
     app.state.pipeline = pipeline
@@ -226,7 +226,7 @@ def create_app(data_dir: str | Path | None = None, *, providers=None, audio_fact
 
     @app.get("/api/health")
     def health(request: Request):
-        result = {"ok": True, "name": "声织", "version": "1.2.1", "security_version": 1, "listening": pipeline.listening}
+        result = {"ok": True, "name": "声织", "version": "1.3.0", "security_version": 1, "listening": pipeline.listening}
         proof = access.health_proof(request.query_params.get("challenge", ""))
         if proof:
             result["proof"] = proof
@@ -372,6 +372,10 @@ def create_app(data_dir: str | Path | None = None, *, providers=None, audio_fact
     @app.get("/api/state")
     def state(since_records_rev: int | None = None, since_logs_rev: int | None = None):
         return pipeline.state(since_records_rev=since_records_rev, since_logs_rev=since_logs_rev)
+
+    @app.get("/api/usage")
+    def usage(days: int = Query(default=30, ge=1, le=90)):
+        return pipeline.usage.summary(days)
 
     @app.get("/api/subtitles/current")
     def current_subtitle():

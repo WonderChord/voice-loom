@@ -16,8 +16,11 @@
 - `set_defaults`：设置参考音色、ASR、LLM、自检 LLM、TTS、输入输出设备和润色/自检开关。参数接受完整 ID 或名称；部分匹配只在唯一时生效，多个候选会返回候选列表，配置保持不变。
 - `list_characters` / `use_character`：列出角色卡；按 ID 或名称切换角色卡（同时切换音色、TTS、人设、语言和专属读音）。
 - `preview_pronunciation`：查看读音词典替换后实际送给 TTS 的文字。
+- `get_usage(days=30)`：返回本场 `session`、指定天数的按服务累计 `providers`、按日累计 `daily`，支持 1～90 天。字段包括 `requests`、`failures`、`tokens_in`、`tokens_out`、`chars`、`input_s`、`audio_s`、`fallbacks`；`save_error` 提示磁盘写入异常。
 
-`update_settings` 修改人设、提示词、语言、角色卡、读音词典、音频和字幕等工作台设置。模型的服务地址和 API Key 只在界面的“模型连接”页修改，避免已保存的密钥被发往新地址。
+`update_settings` 修改人设、提示词、语言、角色卡、读音词典、音频、字幕和 `hotkeys` 等工作台设置。`active.tts_fallback` 指定备用 TTS 服务 ID，空字符串关闭；`hotkeys.enabled` 开关全局快捷键，其余字段为 `toggle_listen`、`flush`、`stop_playback`、`next_character`、`previous_character`；角色卡的 `hotkey` 为专属组合键。对象按键合并，例如 `{"active":{"tts_fallback":"elevenlabs"},"hotkeys":{"enabled":true}}`。模型的服务地址和 API Key 只在界面的“模型连接”页修改，避免已保存的密钥被发往新地址。
+
+`get_status` 中的 `tts_failover` 显示主、备用服务 ID 与名称、`since` 和 `reason`，正常时为 null；`hotkeys` 按动作返回 `{key, ok, message}`，角色动作名为 `character:<id>`。HTTP 对应接口为 `GET /api/usage?days=30` 和 `GET /api/state`，沿用本机会话授权。
 
 MCP 和窗口共用本机后台及数据目录。MCP 可在窗口关闭时使用；客户端会管理自己启动的 MCP 进程和后代。连接前验证本机后台的随机挑战证明，再发送派生会话授权；端口被其他服务占用时返回可读错误。
 

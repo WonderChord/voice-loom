@@ -122,14 +122,21 @@ def create_server(settings, workstation=None):
         """读取模型、人设、目标语言与设备配置，API Key 返回已配置标记。"""
         return bridge.call('GET', '/config')
 
+    @server.tool(annotations=read)
+    def get_usage(days: int = 30) -> dict[str, Any]:
+        """查询本场和近 1～90 天的用量：按服务统计请求、失败、token、字数、音频秒数和备用合成次数。"""
+        if not 1 <= days <= 90:
+            raise ToolError('days 须为 1～90')
+        return bridge.call('GET', '/usage', params={'days': days})
+
     @server.tool(annotations=write)
     def update_settings(changes: dict) -> dict[str, Any]:
-        """修改工作台设置。changes 支持 active、default_asr、target_language、rewrite_enabled、audit_enabled、allow_events、emotion_intensity、persona、prompt、speech_prompt、style_strength、active_style_preset、style_presets、characters、pronunciations、context_limit、audio、subtitles、appearance；对象字段按键合并。切换角色卡请用 use_character。模型的地址与密钥请在模型连接页修改。"""
+        """修改工作台设置。changes 支持 active（含 tts_fallback）、default_asr、target_language、rewrite_enabled、audit_enabled、allow_events、emotion_intensity、persona、prompt、speech_prompt、style_strength、active_style_preset、style_presets、characters、pronunciations、hotkeys、context_limit、audio、subtitles、appearance；对象字段按键合并。切换角色卡请用 use_character。模型的地址与密钥请在模型连接页修改。"""
         allowed = {
             'active', 'default_asr', 'target_language', 'rewrite_enabled', 'audit_enabled',
             'allow_events', 'emotion_intensity', 'persona', 'prompt', 'speech_prompt',
             'style_strength', 'active_style_preset', 'style_presets', 'context_limit',
-            'audio', 'subtitles', 'appearance', 'characters', 'pronunciations',
+            'audio', 'subtitles', 'appearance', 'characters', 'pronunciations', 'hotkeys',
         }
         if not changes or set(changes)-allowed:
             raise ToolError('请选择工具说明中列出的设置字段')
@@ -152,6 +159,7 @@ def create_server(settings, workstation=None):
                 'tts': names.get(c.get('tts', ''), c.get('tts', '')),
                 'target_language': c.get('target_language'), 'rewrite_enabled': c.get('rewrite_enabled'),
                 'pronunciations': len(c.get('pronunciations') or []),
+                'hotkey': c.get('hotkey', ''),
             } for c in config.get('characters') or []],
             'global_pronunciations': len(config.get('pronunciations') or []),
         }

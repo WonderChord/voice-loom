@@ -6,6 +6,7 @@ from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from . import hotkeys as hotkey_keys
 from .language import TargetLanguage
 
 
@@ -60,6 +61,8 @@ class Active(Model):
     llm: str = "cloud-llm"
     audit_llm: str = Field(default="", max_length=80)
     tts: str = "breeze"
+    # 主 TTS 连不上（超时、断线、网关 5xx）时自动改用的 TTS，通常选一个云端 API。
+    tts_fallback: str = Field(default="", max_length=80)
     reference: str = ""
 
 
@@ -141,6 +144,7 @@ class Character(Model):
     target_language: TargetLanguage = "original"
     emotion_intensity: float = Field(default=0.6, ge=0, le=1)
     pronunciations: list[Pronunciation] = Field(default_factory=list, max_length=500)
+    hotkey: str = Field(default="", max_length=40)
 
     @field_validator("name")
     @classmethod
@@ -148,6 +152,25 @@ class Character(Model):
         if not value.strip():
             raise ValueError("角色卡名称不能为空")
         return value.strip()
+
+    @field_validator("hotkey")
+    @classmethod
+    def valid_hotkey(cls, value: str) -> str:
+        return hotkey_keys.normalize(value)
+
+
+class Hotkeys(Model):
+    enabled: bool = False
+    toggle_listen: str = Field(default="Ctrl+Alt+F9", max_length=40)
+    flush: str = Field(default="Ctrl+Alt+F10", max_length=40)
+    stop_playback: str = Field(default="Ctrl+Alt+F11", max_length=40)
+    next_character: str = Field(default="Ctrl+Alt+F8", max_length=40)
+    previous_character: str = Field(default="", max_length=40)
+
+    @field_validator("toggle_listen", "flush", "stop_playback", "next_character", "previous_character")
+    @classmethod
+    def valid_key(cls, value: str) -> str:
+        return hotkey_keys.normalize(value)
 
 
 class StylePreset(Model):
@@ -212,6 +235,14 @@ class Config(Model):
     characters: list[Character] = Field(default_factory=list, max_length=40)
     active_character: str = Field(default="", max_length=80)
     pronunciations: list[Pronunciation] = Field(default_factory=list, max_length=1000)
+    hotkeys: Hotkeys = Field(default_factory=Hotkeys)
+
+    @model_validator(mode="after")
+    def valid_hotkeys(self):
+        repeated = hotkey_keys.duplicates(hotkey_keys.bindings(self.model_dump()))
+        if repeated:
+            raise ValueError(f"快捷键 {repeated[0]} 重复，请给每个动作设置不同的组合")
+        return self
 
     @model_validator(mode="after")
     def valid_characters(self):
@@ -237,6 +268,8 @@ class Config(Model):
                 raise ValueError(f"当前 {kind.upper()} 未指向对应服务")
         if self.active.audit_llm and (self.active.audit_llm not in lookup or lookup[self.active.audit_llm].kind != "llm"):
             raise ValueError("当前自检 LLM 未指向 LLM 服务")
+        if self.active.tts_fallback and (self.active.tts_fallback not in lookup or lookup[self.active.tts_fallback].kind != "tts"):
+            raise ValueError("备用 TTS 未指向 TTS 服务")
         if self.default_asr not in lookup or lookup[self.default_asr].kind != "asr":
             raise ValueError("默认 ASR 未指向 ASR 服务")
         return self

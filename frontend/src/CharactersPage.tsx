@@ -8,9 +8,11 @@ import {
   type StyleStrength,
   type TargetLanguage,
   type Voice,
+  type Runtime,
   targetLanguageNames,
 } from "./types";
 import { Field, Toggle } from "./components";
+import { HotkeyField } from "./HotkeyField";
 
 const strengths: Record<StyleStrength, string> = {
   off: "原意保留",
@@ -21,6 +23,7 @@ const strengths: Record<StyleStrength, string> = {
 
 type Props = {
   config: Config;
+  hotkeyStatus: Runtime["hotkeys"];
   voices: Voice[];
   change: (patch: Partial<Config>) => void;
   save: (next?: Config) => Promise<Config>;
@@ -53,6 +56,7 @@ function fromCurrent(config: Config, name: string): Character {
     target_language: config.target_language ?? "original",
     emotion_intensity: config.emotion_intensity,
     pronunciations: [],
+    hotkey: "",
   };
 }
 
@@ -150,7 +154,7 @@ export function PronunciationEditor({
   );
 }
 
-export function CharactersPage({ config, voices, change, save, applyCharacter, dirty, run, notify }: Props) {
+export function CharactersPage({ config, hotkeyStatus, voices, change, save, applyCharacter, dirty, run, notify }: Props) {
   const cards = config.characters || [];
   const [editingId, setEditingId] = useState(config.active_character || cards[0]?.id || "");
   const [newName, setNewName] = useState("");
@@ -180,7 +184,7 @@ export function CharactersPage({ config, voices, change, save, applyCharacter, d
     editing &&
     run(async () => {
       if (cards.length >= 40) throw new Error("最多保存 40 张角色卡");
-      const copy = { ...structuredClone(editing), id: `char-${Date.now()}`, name: editing.name + " 副本" };
+      const copy = { ...structuredClone(editing), id: `char-${Date.now()}`, name: editing.name + " 副本", hotkey: "" };
       await save({ ...config, characters: [...cards, copy] });
       setEditingId(copy.id);
     });
@@ -197,7 +201,7 @@ export function CharactersPage({ config, voices, change, save, applyCharacter, d
       notify(`已删除角色卡「${editing.name}」`);
     });
   const captureCurrent = () =>
-    editing && updateCard({ ...fromCurrent(config, editing.name), id: editing.id, note: editing.note, pronunciations: editing.pronunciations });
+    editing && updateCard({ ...fromCurrent(config, editing.name), id: editing.id, note: editing.note, pronunciations: editing.pronunciations, hotkey: editing.hotkey });
   const runPreview = () =>
     run(async () => {
       if (dirty) await save();
@@ -239,6 +243,7 @@ export function CharactersPage({ config, voices, change, save, applyCharacter, d
                 <small>
                   {targetLanguageNames[card.target_language]} · {strengths[card.style_strength]}
                 </small>
+                {card.hotkey && <small>{card.hotkey}</small>}
               </button>
               <button
                 className={config.active_character === card.id ? "" : "primary"}
@@ -290,6 +295,8 @@ export function CharactersPage({ config, voices, change, save, applyCharacter, d
             </div>
           </div>
           <div className="form-grid">
+            <HotkeyField label="角色卡快捷键" value={editing.hotkey || ""} enabled={config.hotkeys.enabled}
+              status={hotkeyStatus?.[`character:${editing.id}`]} onChange={(hotkey) => updateCard({ hotkey })} />
             <Field label="名称">
               <input
                 aria-label="角色卡名称"

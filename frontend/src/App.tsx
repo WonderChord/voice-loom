@@ -310,7 +310,7 @@ export default function App() {
         <div className="local-note">
           <span className={"dot " + (online ? "live" : "bad")} />{" "}
           {online ? "本机工作空间" : "服务已断开"}
-          <span>v1.2</span>
+          <span>v1.3</span>
         </div>
       </aside>
       <div className="main-shell">
@@ -401,6 +401,7 @@ export default function App() {
           {page === "characters" && (
             <CharactersPage
               config={config}
+              hotkeyStatus={runtime.hotkeys}
               voices={voices}
               change={change}
               save={save}
@@ -420,6 +421,7 @@ export default function App() {
               change={change}
               refresh={() => run(refreshDevices)}
               listening={runtime.listening}
+              hotkeyStatus={runtime.hotkeys}
             />
           )}
           {page === "appearance" && <AppearancePage config={config} change={change} />}
@@ -435,7 +437,7 @@ export default function App() {
             </span>
             <div>
               <b>{runtime.playing ? "正在输出" : "语音输出"}</b>
-              <small>{activeTts?.name || "选择合成引擎"}</small>
+              <small>{runtime.tts_failover ? `${runtime.tts_failover.fallback_name} · 备用` : activeTts?.name || "选择合成引擎"}</small>
             </div>
           </div>
           <span className="divider" />

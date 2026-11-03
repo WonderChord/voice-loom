@@ -38,10 +38,32 @@ class FakeWorkstation:
             return self.devices
         if path == '/capabilities':
             return {prov['id']: p.capabilities(prov) for prov in self.config['providers']}
+        if path == '/usage':
+            return {'days': kwargs['params']['days'], 'session': [], 'providers': [], 'daily': []}
         return {'id': 'task'}
 
 
 class MCPTests(unittest.TestCase):
+    def test_usage_tool_and_fallback_hotkey_settings(self):
+        async def check(client, bridge):
+            listed = {tool.name: tool for tool in (await client.list_tools()).tools}
+            self.assertTrue(listed['get_usage'].annotations.read_only_hint)
+            result = await client.call_tool('get_usage', {'days': 7})
+            self.assertFalse(result.is_error)
+            self.assertEqual(result.structured_content['days'], 7)
+            result = await client.call_tool('get_usage', {'days': 91})
+            self.assertTrue(result.is_error)
+            result = await client.call_tool('update_settings', {'changes': {
+                'active': {'tts_fallback': 'elevenlabs'},
+                'hotkeys': {'enabled': True, 'next_character': 'Ctrl+Alt+F8'},
+            }})
+            self.assertFalse(result.is_error)
+            self.assertEqual(bridge.config['active']['tts_fallback'], 'elevenlabs')
+            self.assertTrue(bridge.config['hotkeys']['enabled'])
+            self.assertEqual(bridge.config['hotkeys']['toggle_listen'], 'Ctrl+Alt+F9')
+            self.assertEqual(bridge.config['active']['tts'], 'breeze')
+        self.run_client(check)
+
     def run_client(self, exercise):
         with tempfile.TemporaryDirectory() as folder:
             bridge=FakeWorkstation()
