@@ -20,6 +20,8 @@ import {
   ChevronRight,
   Captions,
   Contact,
+  Menu,
+  Undo2,
 } from "lucide-react";
 import {
   api,
@@ -29,9 +31,11 @@ import {
   type Devices,
   type Entry,
   type Plan,
+  statusNames,
 } from "./types";
 import { Modal, PlanEditor } from "./components";
-import { Dashboard } from "./Dashboard";
+import { Dashboard, type Readiness } from "./Dashboard";
+import { type StudioDraft } from "./StudioComposer";
 import { applyTheme } from "./theme";
 import { SubtitlesPage } from "./SubtitlesPage";
 import { DesktopTools } from "./DesktopTools";
@@ -51,9 +55,9 @@ const nav = [
   { id: "models", label: "模型连接", icon: Boxes },
   { id: "characters", label: "角色卡与读音", icon: Contact },
   { id: "prompts", label: "人设与提示词", icon: NotebookPen },
-  { id: "devices", label: "音频设备", icon: SlidersHorizontal },
+  { id: "devices", label: "设备与快捷键", icon: SlidersHorizontal },
   { id: "subtitles", label: "直播字幕", icon: Captions },
-  { id: "history", label: "运行记录", icon: History },
+  { id: "history", label: "记录与用量", icon: History },
   { id: "appearance", label: "外观主题", icon: Palette },
 ];
 const emptyState: Runtime = {
@@ -69,6 +73,9 @@ const emptyState: Runtime = {
 };
 export default function App() {
   const [page, setPage] = useState("studio"),
+    [menuOpen, setMenuOpen] = useState(false),
+    [modelTarget, setModelTarget] = useState({ id: "", visit: 0 }),
+    [draft, setDraft] = useState<StudioDraft>({ text: "", preview: false, file: null }),
     [config, setConfig] = useState<Config | null>(null),
     [voices, setVoices] = useState<Voice[]>([]),
     [devices, setDevices] = useState<Devices>({
@@ -85,6 +92,25 @@ export default function App() {
     [editing, setEditing] = useState<{ entry: Entry; plan: Plan } | null>(null),
     [clearConfirm, setClearConfirm] = useState(false);
   const dirtyRef = useRef(false);
+  const [readiness, setReadiness] = useState<Readiness | null>(null);
+  useEffect(() => {
+    let current = true;
+    setReadiness(null);
+    if (config && online && !dirty && !runtime.listening) {
+      api<Readiness>("/listen/readiness")
+        .then((value) => { if (current) setReadiness(value); })
+        .catch(() => { /* A connection error is already shown by the working session. */ });
+    }
+    return () => { current = false; };
+  }, [config, voices, dirty, online, runtime.listening]);
+  const savedConfig = useRef<Config | null>(null);
+  const revision = useRef(0);
+  const operations = useRef(0);
+  const navigate = (next: string, providerId = "") => {
+    if (next === "models") setModelTarget((last) => ({ id: providerId, visit: last.visit + 1 }));
+    setPage(next);
+    setMenuOpen(false);
+  };
   useEffect(() => {
     document.documentElement.dataset.unsavedChanges = String(dirty);
     const guard = (event: BeforeUnloadEvent) => {
@@ -98,13 +124,14 @@ export default function App() {
   const notify = useCallback((text: string, error = false) => setToast({ text, error }), []);
   const run = useCallback(
     async (fn: () => Promise<unknown>) => {
+      operations.current += 1;
       setBusy(true);
       try {
         await fn();
       } catch (e) {
         notify(e instanceof Error ? e.message : String(e), true);
       } finally {
-        setBusy(false);
+        if (--operations.current === 0) setBusy(false);
       }
     },
     [notify],
@@ -115,11 +142,15 @@ export default function App() {
     window.scrollTo(0, 0);
   }, [page]);
   useEffect(() => {
+    let current = true;
     void Promise.all([
-      api<Config>("/config").then(setConfig),
+      api<Config>("/config").then((value) => {
+        if (current) { savedConfig.current = value; setConfig(value); }
+      }),
       refreshVoices(),
       refreshDevices(),
-    ]).catch((e) => notify(e.message, true));
+    ]).catch((e) => { if (current) notify(e.message, true); });
+    return () => { current = false; };
   }, [notify, refreshVoices, refreshDevices]);
   useEffect(() => {
     let alive = true;
@@ -127,10 +158,12 @@ export default function App() {
     const sync = async () => {
       try {
         if (!dirtyRef.current && !document.hidden) {
+          const before = revision.current;
           const [saved, references] = await Promise.all([
             api<Config>("/config"), api<Voice[]>("/references"),
           ]);
-          if (alive && !dirtyRef.current) {
+          if (alive && !dirtyRef.current && before === revision.current) {
+            savedConfig.current = saved;
             setConfig((previous) => JSON.stringify(previous) === JSON.stringify(saved) ? previous : saved);
             setVoices((previous) => JSON.stringify(previous) === JSON.stringify(references) ? previous : references);
           }
@@ -194,21 +227,48 @@ export default function App() {
     applyTheme(a.accent, a.mode);
   }, [config?.appearance]);
   const change = (patch: Partial<Config>) => {
+    revision.current += 1;
     dirtyRef.current = true;
     setConfig((c) => (c ? { ...c, ...patch } : c));
     setDirty(true);
   };
-  const save = async (next = config) => {
+  const save = useCallback(async (next = config) => {
     if (!next) throw new Error("设置尚未读取");
+    const before = ++revision.current;
     const saved = await api<Config>("/config", {
       method: "PUT",
       body: JSON.stringify(next),
     });
-    setConfig(saved);
+    savedConfig.current = saved;
+    if (before === revision.current) {
+      revision.current += 1;
+      setConfig(saved);
+      dirtyRef.current = false;
+      setDirty(false);
+    }
+    return saved;
+  }, [config]);
+  const saveDraft = useCallback(() => run(async () => {
+    await save();
+    notify(dirtyRef.current ? "已保存，仍有刚修改的设置" : "设置已保存");
+  }), [run, save, notify]);
+  const discard = () => {
+    if (!savedConfig.current) return;
+    revision.current += 1;
+    setConfig(savedConfig.current);
     dirtyRef.current = false;
     setDirty(false);
-    return saved;
+    notify("已恢复上次保存的设置");
   };
+  useEffect(() => {
+    const shortcut = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || !(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey || e.key.toLowerCase() !== "s") return;
+      e.preventDefault();
+      if (dirtyRef.current && !operations.current && online && !e.repeat && !document.querySelector('[aria-modal="true"]')) void saveDraft();
+    };
+    window.addEventListener("keydown", shortcut);
+    return () => window.removeEventListener("keydown", shortcut);
+  }, [online, saveDraft]);
   const quick = async (patch: Partial<Config>) => {
     if (!config) return;
     await save({ ...config, ...patch });
@@ -231,6 +291,8 @@ export default function App() {
         method: "POST",
       });
       setConfig(result.config);
+      savedConfig.current = result.config;
+      revision.current += 1;
       dirtyRef.current = false;
       setDirty(false);
       const name = result.config.characters.find((c) => c.id === id)?.name || "";
@@ -255,6 +317,17 @@ export default function App() {
     );
   const activeVoice = voices.find((v) => v.id === config.active.reference),
     activeTts = config.providers.find((p) => p.id === config.active.tts);
+  const sessionState = !online ? "已断开" : runtime.playing ? "播放中" :
+    runtime.stage !== "idle" ? (statusNames[runtime.stage] || "处理中") :
+    runtime.listening ? "监听中" : "待机";
+  const setupIssue = !dirty && !runtime.listening && readiness && !readiness.ready ? readiness : null;
+  const navButtons = nav.map((n) => (
+    <button className={page === n.id ? "selected" : ""} key={n.id}
+      aria-label={n.label} aria-current={page === n.id ? "page" : undefined}
+      title={n.label} onClick={() => navigate(n.id)}>
+      <n.icon size={19} /><span>{n.label}</span>{page === n.id && <span className="nav-dot" />}
+    </button>
+  ));
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -275,25 +348,13 @@ export default function App() {
           </span>
         </a>
         <div className="nav-label">创作空间</div>
-        <nav>
-          {nav.map((n) => (
-            <button
-              className={page === n.id ? "selected" : ""}
-              key={n.id}
-              onClick={() => setPage(n.id)}
-            >
-              <n.icon size={19} />
-              <span>{n.label}</span>
-              {page === n.id && <span className="nav-dot" />}
-            </button>
-          ))}
-        </nav>
+        <nav aria-label="主导航">{navButtons}</nav>
         <div className="session-card">
           <div className="row between">
             <span>当前会话</span>
             <span className={"dot " + (runtime.listening ? "live" : "")} />
           </div>
-          <b>{runtime.listening ? "正在倾听你的表达" : "准备好，自然地说"}</b>
+          <b>{sessionState}</b>
           <div className="session-count">
             <span>
               已完成 <strong>{runtime.records.filter((r) => r.status === "done").length}</strong>
@@ -310,43 +371,33 @@ export default function App() {
         <div className="local-note">
           <span className={"dot " + (online ? "live" : "bad")} />{" "}
           {online ? "本机工作空间" : "服务已断开"}
-          <span>v1.3</span>
+          <span>v1.3.1</span>
         </div>
       </aside>
       <div className="main-shell">
-        <header className="topbar">
-          <div>
+        <header className={"topbar" + (dirty ? " with-changes" : "")}>
+          <div className="page-identity">
+            <button className="icon mobile-nav-button" aria-label="打开导航" title="打开导航"
+              aria-haspopup="dialog" onClick={() => setMenuOpen(true)}><Menu size={20} /></button>
+            <div>
             <div className="eyebrow">
               VOICE WORKSPACE <span>/</span>{" "}
               {String(nav.findIndex((n) => n.id === page) + 1).padStart(2, "0")}
             </div>
             <h1>{nav.find((n) => n.id === page)?.label}</h1>
+            </div>
           </div>
           <div className="top-actions">
             <DesktopTools />
-            {dirty && (
-              <button
-                className="save-button"
-                disabled={busy}
-                onClick={() =>
-                  run(async () => {
-                    await save();
-                    notify("设置已保存");
-                  })
-                }
-              >
-                <Save size={16} />
-                保存更改
-              </button>
-            )}
             <span className="mode-badge">
-              <span className="dot live" />
-              持续转述
+              <span className={"dot " + (!online ? "bad" : runtime.listening || runtime.stage !== "idle" ? "live" : "")} />
+              {sessionState}
             </span>
             <button
               className={runtime.listening ? "stop-button" : "primary"}
               disabled={busy || !online}
-              onClick={startStop}
+              onClick={() => setupIssue ? navigate(setupIssue.page, setupIssue.provider) : startStop()}
+              title={setupIssue?.message}
             >
               {busy ? (
                 <LoaderCircle className="spin" size={17} />
@@ -355,9 +406,16 @@ export default function App() {
               ) : (
                 <Mic size={17} />
               )}{" "}
-              {runtime.listening ? "停止监听" : "开始监听"}
+              {runtime.listening ? "停止监听" : setupIssue ? "设置监听" : dirty ? "保存并监听" : "开始监听"}
             </button>
           </div>
+          {dirty && <div className="settings-changes" aria-label="未保存的设置">
+            <span><i />设置未保存</span>
+            <button type="button" title="恢复上次保存的设置" disabled={busy} onClick={discard}><Undo2 size={14} />撤销更改</button>
+            <button type="button" className="save-button" title="保存更改 (Ctrl + S)" disabled={busy || !online} onClick={saveDraft}>
+              <Save size={14} />保存更改
+            </button>
+          </div>}
         </header>
         {!online && (
           <div className="connection-banner">
@@ -373,7 +431,11 @@ export default function App() {
               voices={voices}
               devices={devices}
               busy={busy}
-              navigate={setPage}
+              navigate={navigate}
+              draft={draft}
+              updateDraft={(patch) => setDraft((previous) => ({ ...previous, ...patch }))}
+              online={online}
+              readiness={readiness}
               quick={(patch) => run(() => quick(patch))}
               onEdit={editEntry}
               onPlay={play}
@@ -396,7 +458,7 @@ export default function App() {
             />
           )}
           {page === "models" && (
-            <ModelsPage config={config} change={change} save={save} run={run} notify={notify} />
+            <ModelsPage key={modelTarget.visit} initialProviderId={modelTarget.id} config={config} change={change} save={save} run={run} notify={notify} />
           )}
           {page === "characters" && (
             <CharactersPage
@@ -492,6 +554,10 @@ export default function App() {
           <DebugPanel runtime={runtime} />
         </footer>
       </div>
+      {menuOpen && <Modal title="页面导航" onClose={() => setMenuOpen(false)}>
+        <nav className="mobile-nav-grid" aria-label="页面导航">{navButtons}</nav>
+        <button className="full" onClick={() => { setMenuOpen(false); setClearConfirm(true); }}><Plus size={16} />新建会话</button>
+      </Modal>}
       {toast && (
         <div className={"toast " + (toast.error ? "error" : "")} role="status">
           {toast.error ? <AlertCircle size={18} /> : <Check size={18} />}
@@ -540,7 +606,7 @@ export default function App() {
       )}
       {clearConfirm && (
         <Modal title="开始新会话" onClose={() => setClearConfirm(false)}>
-          <p>当前监听会停止，界面记录与 LLM 上下文将清空。已生成音频继续保存在本机。</p>
+          <p>当前监听会停止，本场记录、对话上下文和本场用量将清空。已生成音频、累计用量和未提交草稿会保留。</p>
           <a className="text-link" href="/api/export/session" download>
             <Download size={15} />
             先导出当前会话

@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import {
   Plus,
   Search,
@@ -29,6 +29,7 @@ import {
   type Devices,
   type Entry,
   type Kind,
+  statusNames,
 } from "./types";
 import { Field, Toggle, Modal, AudioPreview } from "./components";
 import { EntryCard } from "./Dashboard";
@@ -415,20 +416,23 @@ const typeNames: Record<string, string> = {
   drama3_local: "Drama 3 · audio.cpp（本机 / 自部署）",
 };
 export function ModelsPage({
+  initialProviderId,
   config,
   change,
   save,
   run,
   notify,
 }: {
+  initialProviderId: string;
   config: Config;
   change: Change;
   save: () => Promise<Config>;
   run: Run;
   notify: Notify;
 }) {
-  const [kind, setKind] = useState<Kind>("asr"),
-    [selected, setSelected] = useState(config.active.asr),
+  const initial = config.providers.find((p) => p.id === initialProviderId);
+  const [kind, setKind] = useState<Kind>(initial?.kind || "asr"),
+    [selected, setSelected] = useState(initial?.id || config.active.asr),
     [results, setResults] = useState<Record<string, { ok: boolean; message: string }>>({});
   const provider =
     config.providers.find((p) => p.id === selected && p.kind === kind) ||
@@ -459,7 +463,7 @@ export function ModelsPage({
     <>
       <div className="page-intro">
         <div>
-          <h2>模型各司其职，连接随时可换</h2>
+          <h2>配置模型服务</h2>
           <p>每个服务独立保存地址、模型和密钥。可添加多个云端连接并随时切换。</p>
         </div>
         <button onClick={add}>
@@ -507,6 +511,7 @@ export function ModelsPage({
                   <small>{typeNames[p.type]}</small>
                 </span>
                 {config.active[kind] === p.id && <Check size={16} />}
+                {kind === "tts" && config.active.tts_fallback === p.id && config.active.tts !== p.id && <small className="chip">备用</small>}
               </button>
             ))}
         </div>
@@ -839,21 +844,25 @@ export function DevicesPage({
   hotkeyStatus: Runtime["hotkeys"];
 }) {
   const audio = config.audio;
+  const [section, setSection] = useState<"audio" | "keys">("audio");
   const update = (p: Partial<Config["audio"]>) => change({ audio: { ...audio, ...p } });
   return (
     <>
       <div className="page-intro">
         <div>
-          <h2>声音从哪里来，要到哪里去</h2>
-          <p>选择麦克风、耳机或虚拟声卡，调整持续监听的分句节奏。</p>
+          <h2>{section === "audio" ? "输入、输出与断句" : "后台操作与角色切换"}</h2>
+          <p>{section === "audio" ? "选择输入输出设备，调整断句和播放方式。" : "绑定组合键，在其他窗口也能操作声织。"}</p>
         </div>
-        <button onClick={refresh}>
+        {section === "audio" && <button onClick={refresh}>
           <RefreshCw size={16} />
           刷新设备
-        </button>
+        </button>}
       </div>
-      {listening && <div className="notice">正在监听。请先停止监听，再保存音频设置。</div>}
-      <section className="card settings-card">
+      <div className="segmented device-tabs" role="group" aria-label="设置分类">
+        <button className={section === "audio" ? "active" : ""} aria-pressed={section === "audio"} onClick={() => setSection("audio")}>音频与断句</button>
+        <button className={section === "keys" ? "active" : ""} aria-pressed={section === "keys"} onClick={() => setSection("keys")}>全局快捷键</button>
+      </div>
+      {section === "keys" ? <section className="card settings-card">
         <h2>全局快捷键</h2>
         <Toggle label="启用全局快捷键" value={config.hotkeys.enabled}
           note="工作台在后台也能响应，保存设置后生效。改键前可关闭并保存，避免触发已有动作。"
@@ -876,7 +885,8 @@ export function DevicesPage({
             <small className={applied && !status.ok ? "error-text" : "muted"}>{!config.hotkeys.enabled ? "快捷键已关闭" : !applied ? "保存后生效" : status.ok ? "已生效" : status.message}</small>
           </div>;
         })}
-      </section>
+      </section> : <>
+      {listening && <div className="notice">正在监听。请先停止监听，再保存音频设置。</div>}
       <div className="prompt-grid">
         {(["input", "output"] as const).map((k) => (
           <section className="card settings-card" key={k}>
@@ -1018,6 +1028,7 @@ export function DevicesPage({
           onChange={(auto_play) => update({ auto_play })}
         />
       </section>
+      </>}
     </>
   );
 }
@@ -1109,70 +1120,66 @@ export function HistoryPage({
   onEdit: (e: Entry) => void;
   onPlay: (e: Entry) => void;
 }) {
-  const [tab, setTab] = useState("records"),
-    [query, setQuery] = useState("");
+  const [tab, setTab] = useState<"records" | "logs" | "usage">("records");
+  const [queries, setQueries] = useState({ records: "", logs: "" });
+  const [filter, setFilter] = useState("all");
+  const [limit, setLimit] = useState(20);
+  const recordNeedle = queries.records.trim().toLowerCase();
+  const logNeedle = queries.logs.trim().toLowerCase();
+  const entries = useMemo(() => runtime.records.filter((record) =>
+    (filter === "all" || record.status === filter) &&
+    [record.source_text, record.text, record.error, record.skip_reason, ...(record.plan?.warnings || [])]
+      .some((value) => (value || "").toLowerCase().includes(recordNeedle))),
+    [runtime.records, filter, recordNeedle]);
+  const logs = useMemo(() => runtime.logs.filter((item) =>
+    (item.level + " " + item.message).toLowerCase().includes(logNeedle)), [runtime.logs, logNeedle]);
+  const filteredCount = tab === "logs" ? logs.length : entries.length;
+  const hasFilters = tab === "logs" ? !!logNeedle : !!recordNeedle || filter !== "all";
   return (
     <>
       <div className="page-intro">
-        <div>
-          <h2>每一次表达，都有迹可循</h2>
-          <p>查看原始转写、编排结果与运行状态，定位出错的环节。</p>
-        </div>
-        <a className="button" href="/api/export/session" download>
-          <Download size={16} />
-          导出会话
-        </a>
+        <div><h2>查看本场运行情况</h2><p>查找处理结果、定位错误，或查看各服务用量。</p></div>
+        <a className="button" href="/api/export/session" download><Download size={16} />导出会话</a>
       </div>
-      <div className="toolbar">
-        <div className="segmented">
-          <button className={tab === "records" ? "active" : ""} onClick={() => setTab("records")}>
-            对话记录
-          </button>
-          <button className={tab === "logs" ? "active" : ""} onClick={() => setTab("logs")}>
-            运行日志
-          </button>
-          <button className={tab === "usage" ? "active" : ""} onClick={() => setTab("usage")}>
-            用量统计
-          </button>
+      <div className="toolbar history-toolbar">
+        <div className="segmented" role="group" aria-label="记录分类">
+          {([["records", "对话记录"], ["logs", "运行日志"], ["usage", "用量统计"]] as const).map(([id, title]) =>
+            <button key={id} aria-pressed={tab === id} className={tab === id ? "active" : ""}
+              onClick={() => { setTab(id); setLimit(20); }}>{title}</button>)}
         </div>
-        {tab !== "usage" && <div className="search-box">
-          <Search size={16} />
-          <input
-            aria-label="搜索记录"
-            placeholder="搜索记录"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-          />
+        {tab !== "usage" && <div className="history-filters">
+          {tab === "records" && <select aria-label="按处理状态筛选" value={filter}
+            onChange={(e) => { setFilter(e.target.value); setLimit(20); }}>
+            <option value="all">全部状态</option>
+            {Object.entries(statusNames).filter(([id]) => !["idle", "listening"].includes(id))
+              .map(([id, label]) => <option value={id} key={id}>{label}</option>)}
+          </select>}
+          <div className="search-box"><Search size={16} /><input type="search"
+            aria-label={tab === "records" ? "搜索记录" : "搜索日志"}
+            placeholder={tab === "records" ? "搜索台词或错误" : "搜索日志"}
+            value={queries[tab]} onChange={(e) => { setQueries({ ...queries, [tab]: e.target.value }); setLimit(20); }} /></div>
         </div>}
       </div>
       {tab === "usage" ? <UsagePanel /> : <section className="card history-card">
-        {tab === "records" ? (
-          runtime.records
-            .filter((r) => `${r.source_text}${r.text}${r.error || ""}`.includes(query))
-            .map((e) => <EntryCard key={e.id} entry={e} onEdit={onEdit} onPlay={onPlay} />)
-        ) : (
-          <div className="log-list">
-            {runtime.logs
-              .filter((l) => l.message.includes(query))
-              .map((l, i) => (
-                <div className={"log-line " + l.level} key={i}>
-                  <time>
-                    {new Date(l.time).toLocaleTimeString("zh-CN", {
-                      hour12: false,
-                    })}
-                  </time>
-                  <span>{l.level}</span>
-                  <p>{l.message}</p>
-                </div>
-              ))}
-          </div>
-        )}
-        {!(tab === "records" ? runtime.records.length : runtime.logs.length) && (
-          <div className="empty-small">
-            <AudioLines size={27} />
-            <p>运行后，记录会出现在这里。</p>
-          </div>
-        )}
+        {filteredCount > 0 ? <>
+          <div className="result-count">共 {filteredCount} {tab === "logs" ? "条日志" : "条记录"}</div>
+          {tab === "records" ? entries.slice(0, limit).map((entry) =>
+            <EntryCard key={entry.id} entry={entry} onEdit={onEdit} onPlay={onPlay} />) :
+            <div className="log-list">{logs.slice(0, limit).map((item, i) => (
+              <div className={"log-line " + item.level} key={i}>
+                <time>{new Date(item.time).toLocaleTimeString("zh-CN", { hour12: false })}</time>
+                <span>{({ error: "错误", warning: "提醒", info: "信息" } as Record<string,string>)[item.level] || item.level}</span>
+                <p>{item.message}</p>
+              </div>
+            ))}</div>}
+          {limit < filteredCount && <div className="load-more"><button onClick={() => setLimit(limit + 20)}>再显示 {Math.min(20, filteredCount - limit)} 条</button></div>}
+        </> : <div className="empty-small search-empty">
+          <Search size={22} />
+          <p>{hasFilters ? "没有符合当前条件的结果" : tab === "logs" ? "还没有运行日志" : "还没有处理记录"}</p>
+          {hasFilters ? <button onClick={() => {
+            setQueries({ ...queries, [tab]: "" }); if (tab === "records") setFilter("all"); setLimit(20);
+          }}>清除筛选</button> : <small>在工作台处理一句台词后，可在这里查看。</small>}
+        </div>}
       </section>}
     </>
   );

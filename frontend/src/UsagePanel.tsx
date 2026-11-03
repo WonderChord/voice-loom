@@ -2,10 +2,18 @@ import { useEffect, useState } from "react";
 import { api, type UsageRow, type UsageSummary } from "./types";
 
 const count = (n: number) => n.toLocaleString("zh-CN", { maximumFractionDigits: 1 });
+const columns = [
+  ["requests", "请求"], ["failures", "失败"], ["tokens_in", "输入 token"], ["tokens_out", "输出 token"],
+  ["chars", "TTS 字数"], ["input_s", "输入音频 / 秒"], ["audio_s", "生成音频 / 秒"], ["fallbacks", "备用合成"],
+] as const;
 function UsageTable({ rows, title, note }: { rows: UsageRow[]; title: string; note: string }) {
+  const total = rows.reduce((n, row) => n + row.requests, 0);
+  const failed = rows.reduce((n, row) => n + row.failures, 0);
   return (
     <section className="card settings-card usage-card">
-      <h2>{title}</h2>
+      <div className="usage-heading"><h2>{title}</h2>
+        {rows.length > 0 && <span>{count(total)} 次请求 · {count(failed)} 次失败</span>}
+      </div>
       <p className="muted">{note}</p>
       {rows.length ? (
         <div className="usage-scroll">
@@ -13,14 +21,7 @@ function UsageTable({ rows, title, note }: { rows: UsageRow[]; title: string; no
             <thead>
               <tr>
                 <th>服务</th>
-                <th>请求</th>
-                <th>失败</th>
-                <th>输入 token</th>
-                <th>输出 token</th>
-                <th>TTS 字数</th>
-                <th>输入音频 / 秒</th>
-                <th>生成音频 / 秒</th>
-                <th>备用合成</th>
+                {columns.map(([key, label]) => <th key={key} scope="col">{label}</th>)}
               </tr>
             </thead>
             <tbody>
@@ -30,19 +31,8 @@ function UsageTable({ rows, title, note }: { rows: UsageRow[]; title: string; no
                     {row.name || row.id}
                     <small>{row.kind.toUpperCase()}</small>
                   </th>
-                  {(
-                    [
-                      "requests",
-                      "failures",
-                      "tokens_in",
-                      "tokens_out",
-                      "chars",
-                      "input_s",
-                      "audio_s",
-                      "fallbacks",
-                    ] as const
-                  ).map((key) => (
-                    <td key={key}>{count(row[key])}</td>
+                  {columns.map(([key, label]) => (
+                    <td key={key} data-label={label}>{count(row[key])}</td>
                   ))}
                 </tr>
               ))}

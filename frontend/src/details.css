@@ -162,9 +162,6 @@
     height: 48px;
     margin-bottom: 10px;
   }
-  .studio-main .composer {
-    flex-shrink: 0;
-  }
   .voice-inspector {
     padding: 14px 17px;
   }

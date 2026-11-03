@@ -1,11 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Mic,
   ChevronRight,
   ArrowUpRight,
   Play,
-  FileAudio,
-  Send,
+  CircleAlert,
   PenLine,
   Download,
   Headphones,
@@ -37,13 +36,20 @@ import {
   llmConnectionIssue,
 } from "./types";
 import { Field, Toggle, AudioPreview } from "./components";
+import { StudioComposer, type StudioDraft } from "./StudioComposer";
+
+export type Readiness = { ready: true } | { ready: false; message: string; provider: string; page: string };
 type Props = {
   config: Config;
   runtime: Runtime;
   voices: Voice[];
   devices: Devices;
   busy: boolean;
-  navigate: (p: string) => void;
+  navigate: (p: string, providerId?: string) => void;
+  draft: StudioDraft;
+  updateDraft: (patch: Partial<StudioDraft>) => void;
+  online: boolean;
+  readiness: Readiness | null;
   quick: (p: Partial<Config>) => void;
   onEdit: (e: Entry) => void;
   onPlay: (e: Entry) => void;
@@ -69,10 +75,10 @@ export function EntryCard({
   const translated = targetLanguage !== "original";
   if (entry.status === "skipped")
     return (
-      <article className="entry entry-skipped">
+      <article id={"entry-" + entry.id} tabIndex={-1} className="entry entry-skipped">
         <div className="entry-meta">
           <time>{new Date(entry.created_at).toLocaleTimeString("zh-CN", { hour12: false })}</time>
-          <span className="status status-skipped">已跳过 · PASS</span>
+          <span className="status status-skipped">已跳过 · 低音量</span>
           <span className="entry-origin">{entry.origin === "mic" ? "麦克风" : "音频文件"}</span>
         </div>
         <p>{entry.skip_reason || entry.error || "有效声音能量不足，已在 ASR 前跳过。"}</p>
@@ -80,7 +86,7 @@ export function EntryCard({
       </article>
     );
   return (
-    <article className={"entry " + (active ? "processing" : "")}>
+    <article id={"entry-" + entry.id} tabIndex={-1} className={"entry " + (active ? "processing" : "")}>
       <div className="entry-meta">
         <time>
           {new Date(entry.created_at).toLocaleTimeString("zh-CN", {
@@ -95,6 +101,7 @@ export function EntryCard({
         {(entry.target_language || entry.plan?.target_language) && (
           <span className="chip">目标：{targetLanguageNames[targetLanguage]}</span>
         )}
+        {entry.preview_only && <span className="chip">编排预览</span>}
         {entry.elapsed_ms > 0 && <span>{(entry.elapsed_ms / 1000).toFixed(1)}s</span>}
         <span className="entry-origin">
           {entry.origin === "mic" ? "麦克风" : entry.origin === "file" ? "音频文件" : "文字测试"}
@@ -233,6 +240,10 @@ export function Dashboard({
   save,
   dirty,
   applyCharacter,
+  draft,
+  updateDraft,
+  online,
+  readiness,
 }: Props) {
   const [caps, setCaps] = useState<Capabilities | null>(null);
   useEffect(() => {
@@ -248,10 +259,7 @@ export function Dashboard({
       live = false;
     };
   }, [config.active.tts, config.providers]);
-  const [text, setText] = useState(""),
-    [levels, setLevels] = useState<number[]>(Array(70).fill(0)),
-    [preview, setPreview] = useState(false);
-  const upload = useRef<HTMLInputElement>(null);
+  const [levels, setLevels] = useState<number[]>(Array(70).fill(0));
   useEffect(() => {
     setLevels((v) => [
       ...v.slice(1),
@@ -269,17 +277,10 @@ export function Dashboard({
   const llmAudit = auditEnabled && (requiresLlm || !!config.active.audit_llm);
   const processingMode = processingModeLabel(targetLanguage, config.rewrite_enabled);
   const llmIssue = llmConnectionIssue(llm);
-  const submit = () =>
-    onRun(async () => {
-      if (!text.trim()) return;
-      if (dirty) await save();
-      await api("/process/text", {
-        method: "POST",
-        body: JSON.stringify({ text: text.trim(), preview_only: preview }),
-      });
-      setText("");
-      notify(preview ? "已提交编排预览" : "已加入转述队列");
-    });
+  const outputTts = (runtime.tts_failover && config.providers.find((p) => p.id === runtime.tts_failover?.fallback)) || tts;
+  const mappedVoice = outputTts && (voice?.provider_voice_ids?.[outputTts.id] || voice?.provider_voice_ids?.[outputTts.type]);
+  const serviceVoice = outputTts && ["elevenlabs", "fish_tts", "openai_tts"].includes(outputTts.type);
+  const voiceId = mappedVoice || (serviceVoice ? outputTts?.voice : "");
   const stage = runtime.stage;
   const stages = [
     {
@@ -318,7 +319,7 @@ export function Dashboard({
     },
     {
       name: "语音输出",
-      sub: tts?.name || "未设置",
+      sub: runtime.tts_failover ? runtime.tts_failover.fallback_name + " · 备用" : tts?.name || "未设置",
       icon: Volume2,
       active: stage === "tts" || runtime.playing,
     },
@@ -346,7 +347,7 @@ export function Dashboard({
             <span>主 TTS {runtime.tts_failover.primary_name} 不可达，自 {new Date(runtime.tts_failover.since).toLocaleTimeString("zh-CN")} 起自动切换；恢复后切回。</span>
             <small>{runtime.tts_failover.reason}</small>
           </div>}
-          <section className="card input-card">
+          <section className={"card input-card " + (runtime.listening ? "mic-live" : "mic-idle")}>
             <div className="card-heading">
               <h2>
                 <span className={"mic-icon " + (runtime.listening ? "listening" : "")}>
@@ -362,6 +363,15 @@ export function Dashboard({
                   : "麦克风待命"}
               </span>
             </div>
+            {readiness && !readiness.ready && !dirty && !runtime.listening && (
+              <div className="readiness-note" role="status">
+                <CircleAlert size={17} />
+                <div><b>监听前还需设置</b><p>{readiness.message}</p></div>
+                <button type="button" onClick={() => navigate(readiness.page, readiness.provider)}>
+                  {readiness.page === "voices" ? "去选音色" : "配置服务"}<ArrowUpRight size={14} />
+                </button>
+              </div>
+            )}
             <div className="input-device-row">
               <select
                 aria-label="快捷选择输入设备"
@@ -425,7 +435,7 @@ export function Dashboard({
             {config.audio.skip_low_energy && (
               <div className="energy-status">
                 <span>
-                  低能量 PASS · {config.audio.energy_threshold_db} dBFS /{" "}
+                  低音量过滤 · {config.audio.energy_threshold_db} dBFS /{" "}
                   {config.audio.min_active_ms} ms
                 </span>
                 <span title={runtime.last_skip_reason || ""}>
@@ -448,6 +458,13 @@ export function Dashboard({
               </div>
             )}
           </section>
+          <StudioComposer draft={draft} update={updateDraft} config={config} dirty={dirty} save={save}
+            busy={busy} online={online} run={onRun} notify={notify}
+            showResult={draft.lastId && runtime.records.slice(0, 30).some((r) => r.id === draft.lastId) ? () => {
+              const result = document.getElementById("entry-" + draft.lastId);
+              result?.focus({ preventScroll: true });
+              result?.scrollIntoView({ block: "center" });
+            } : undefined} />
           <section className="card conversation">
             <div className="conversation-heading">
               <div className="conversation-tab">
@@ -470,90 +487,11 @@ export function Dashboard({
                   <div className="empty-emblem">
                     <AudioLines size={34} />
                   </div>
-                  <h2>开口即入戏，声线随心切换</h2>
-                  <p>
-                    自然开口或输入台词，声织会自动剥离语气指令，
-                    <br />
-                    按你的角色设定与目标声线实时演绎。
-                  </p>
-                  <div className="onboarding">
-                    <button onClick={() => navigate("models")}>
-                      <span>01</span>连接模型
-                      <ChevronRight size={13} />
-                    </button>
-                    <button onClick={() => navigate("prompts")}>
-                      <span>02</span>设定角色
-                      <ChevronRight size={13} />
-                    </button>
-                    <button onClick={() => navigate("voices")}>
-                      <span>03</span>选择音色
-                      <ChevronRight size={13} />
-                    </button>
-                  </div>
+                  <h2>还没有处理记录</h2>
+                  <p>在上方预览一句台词，或开始监听。结果会显示在这里。</p>
                 </div>
               )}
             </div>
-          </section>
-          <section className="card composer">
-            <div className="composer-top">
-              <span>
-                <PenLine size={14} />
-                手动试一句
-              </span>
-              <label>
-                <input
-                  type="checkbox"
-                  checked={preview}
-                  onChange={(e) => setPreview(e.target.checked)}
-                />
-                只预览编排
-              </label>
-            </div>
-            <div className="composer-row">
-              <textarea
-                aria-label="手动测试文本"
-                placeholder="输入你想说的话，试试角色的表达方式…"
-                value={text}
-                maxLength={4000}
-                onChange={(e) => setText(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.ctrlKey && e.key === "Enter") submit();
-                }}
-              />
-              <button className="primary" disabled={!text.trim() || busy} onClick={submit}>
-                <Send size={16} />
-                {preview ? "预览编排" : "合成播放"}
-              </button>
-            </div>
-            <div className="composer-foot">
-              <button
-                className="text-button"
-                onClick={() => upload.current?.click()}
-                disabled={busy}
-              >
-                <FileAudio size={14} />
-                导入录音
-              </button>
-              <small>录音 ≤60 秒 / 25MB · Ctrl + Enter · {text.length}/4000</small>
-            </div>
-            <input
-              ref={upload}
-              hidden
-              type="file"
-              accept="audio/*"
-              onChange={(e) => {
-                const file = e.target.files?.[0];
-                e.target.value = "";
-                if (file)
-                  onRun(async () => {
-                    if (dirty) await save();
-                    const data = new FormData();
-                    data.append("file", file);
-                    await api("/process/audio", { method: "POST", body: data });
-                    notify("录音已加入转述队列");
-                  });
-              }}
-            />
           </section>
         </div>
         <aside className="inspector">
@@ -567,9 +505,9 @@ export function Dashboard({
             <div className="voice-identity">
               <div className="avatar">{voice?.name[0] || "声"}</div>
               <div>
-                <b>{voice?.name || "尚未选择音色"}</b>
+                <b>{voice?.name || (voiceId ? "服务预设音色" : "尚未选择音色")}</b>
                 <small>
-                  {voice ? `${voice.duration.toFixed(1)}s 参考音频` : "导入一段参考录音"}
+                  {voice ? `${voice.duration.toFixed(1)}s 参考音频` : voiceId ? "使用模型连接里的声音 ID" : "选择或导入一段参考录音"}
                 </small>
               </div>
             </div>
@@ -578,15 +516,13 @@ export function Dashboard({
             )}
             <div className="engine-note">
               <Headphones size={13} />
-              {tts?.type === "elevenlabs" || tts?.type === "openai_tts"
-                ? `云端音色 ID：${tts.voice || "待设置"}`
-                : "使用参考录音的音色合成"}
+              {serviceVoice ? "声音 ID：" + (voiceId || "待设置") : mappedVoice ? "已绑定服务端预置音色" : "使用参考录音的音色合成"}
             </div>
           </section>
           <section className="card compact-card">
             <div className="card-heading">
               <h2>模型与人设</h2>
-              <button className="icon" aria-label="模型设置" onClick={() => navigate("models")}>
+              <button className="icon" aria-label="模型设置" onClick={() => navigate("models", config.active.tts)}>
                 <ChevronRight size={19} />
               </button>
             </div>

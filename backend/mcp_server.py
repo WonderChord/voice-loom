@@ -100,7 +100,7 @@ class Workstation:
 
 def create_server(settings, workstation=None):
     bridge = workstation or Workstation(settings)
-    server = MCPServer('voice-loom', title='声织', version='1.3.0',
+    server = MCPServer('voice-loom', title='声织', version='1.3.1',
         instructions='先查询状态和配置，再执行用户要求的操作。合成默认只保存文件，播放和开启麦克风使用独立工具。'
                      '需要确认的表演稿先展示给用户；调用确认合成工具须有用户确认。用户数据保存在本机数据目录。', log_level='WARNING')
     read = ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=False)

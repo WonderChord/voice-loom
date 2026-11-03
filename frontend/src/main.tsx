@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import App from "./App";
 import "./style.css";
 import "./details.css";
+import "./workspace.css";
 async function start() {
   const session = new URLSearchParams(location.hash.slice(1)).get("session");
   if (session) {

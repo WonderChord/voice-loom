@@ -227,6 +227,7 @@ export interface Entry {
   error: string | null;
   elapsed_ms: number;
   origin: string;
+  preview_only?: boolean;
   skip_reason?: string;
   subtitle_event_id?: string;
   subtitle_status?: string;

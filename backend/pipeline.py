@@ -42,6 +42,13 @@ class Cancelled(Exception):
     pass
 
 
+class ListeningSetupIssue(ValueError):
+    def __init__(self, message: str, provider: str, page: str = "models"):
+        super().__init__(message)
+        self.provider = provider
+        self.page = page
+
+
 def validate_listening_config(config: dict, reference: dict | None) -> None:
     """Only inspect saved fields/files; never contact services or open audio devices."""
     selected = {kind: next(p for p in config["providers"] if p["id"] == config["active"][kind]) for kind in ("asr", "llm", "tts")}
@@ -60,43 +67,44 @@ def validate_listening_config(config: dict, reference: dict | None) -> None:
             continue
         kind = provider["type"]
         label = ("备用 TTS " if category == "tts_fallback" else "") + provider["name"]
+        provider_id = provider["id"]
         if kind in {"openai_asr", "openai_llm", "openai_tts"}:
             if not str(provider.get("base_url", "")).strip():
-                raise ValueError(f"{label} 缺少服务地址，请先在模型设置中填写")
+                raise ListeningSetupIssue(f"{label} 缺少服务地址，请在模型连接中填写。", provider_id)
             if not str(provider.get("model", "")).strip():
-                raise ValueError(f"{label} 缺少模型名称，请先在模型设置中填写")
+                raise ListeningSetupIssue(f"{label} 缺少模型名称，请在模型连接中填写。", provider_id)
         base = str(provider.get("base_url", ""))
         if base:
             address = urlsplit(base)
             local = address.hostname in {"127.0.0.1", "localhost", "::1"}
             if address.scheme == "http" and not local:
-                raise ValueError(f"{label} 的云服务地址请使用 HTTPS")
+                raise ListeningSetupIssue(f"{label} 的云服务地址请使用 HTTPS", provider_id)
             if kind == "qwen_local" and not local:
-                raise ValueError(f"{label} 请使用 localhost 或 127.0.0.1 本机地址")
+                raise ListeningSetupIssue(f"{label} 请使用 localhost 或 127.0.0.1 本机地址", provider_id)
             if kind in {"openai_asr", "openai_llm", "openai_tts"} and not local and not str(provider.get("api_key", "")).strip():
-                raise ValueError(f"{label} 缺少 API 密钥，请先在模型设置中保存")
+                raise ListeningSetupIssue(f"{label} 缺少 API 密钥，请在模型连接中保存。", provider_id)
         if kind in {"elevenlabs", "fish_tts"} and not str(provider.get("api_key", "")).strip():
-            raise ValueError(f"{label} 缺少 API 密钥，请先在模型设置中保存")
+            raise ListeningSetupIssue(f"{label} 缺少 API 密钥，请在模型连接中保存。", provider_id)
         if kind in {"openai_tts", "elevenlabs", "fish_tts"}:
             mappings = (reference or {}).get("provider_voice_ids") or {}
             voice = mappings.get(provider["id"]) or mappings.get(kind) or provider.get("voice")
             if not str(voice or "").strip():
-                raise ValueError(f"{label} 缺少声音 ID，请填写声音 ID 或在参考音库绑定声音")
+                raise ListeningSetupIssue(f"{label} 缺少声音 ID，请在模型连接中填写，或在参考音色中绑定。", provider_id)
         if kind in {"breeze", "gptsovits", "drama3_local"}:
             mappings = (reference or {}).get("provider_voice_ids") or {}
             preset = str(mappings.get(provider["id"]) or mappings.get(kind) or "").strip()
             remote = bool(base) and urlsplit(base).hostname not in {"127.0.0.1", "localhost", "::1"}
             if not preset and kind == "gptsovits" and remote:
-                raise ValueError(f"{label} 是云端服务，请在参考语音里填写服务器上的参考音频路径")
+                raise ListeningSetupIssue(f"{label} 是云端服务，请在参考语音里填写服务器上的参考音频路径", provider_id, "voices")
             # 云端预置音色只需名字；其余情况把本机参考音频上传给服务。
             if not preset and not Path((reference or {}).get("path") or "").is_file():
-                raise ValueError(f"{label} 需要参考音频，请先从参考音库选择或导入，或填写云端预置音色名")
+                raise ListeningSetupIssue(f"{label} 需要参考音频，请选择或导入参考音色。云端预置音色可直接绑定。", provider_id, "voices")
             if (not preset or kind == "gptsovits") and not str((reference or {}).get("transcript") or "").strip():
-                raise ValueError("参考语音缺少对应台词，请先识别或填写参考文字")
+                raise ListeningSetupIssue("参考语音缺少对应台词，请先识别或填写参考文字。", provider_id, "voices")
         if kind == "sensevoice":
             from . import local_runtime
             if not local_runtime.available("sensevoice"):
-                raise ValueError("SenseVoice 本机模型文件不完整，请检查本地模型部署")
+                raise ListeningSetupIssue("SenseVoice 本机模型文件不完整，请检查本地模型部署或更换 ASR。", provider_id)
 
 
 @dataclass
@@ -353,15 +361,27 @@ class Pipeline:
         self.log("info", f"已切换到角色卡「{card['name']}」" + ("；" + "；".join(notes) if notes else ""))
         return {"config": saved, "warnings": notes}
 
+    def _checked_listening_config(self):
+        config = self.store.config(decrypted=True)
+        reference_id = config["active"]["reference"]
+        reference = self.store.reference(reference_id, private=True) if reference_id else None
+        validate_listening_config(config, reference)
+        return config
+
+    def listening_readiness(self):
+        with self.lock:
+            try:
+                self._checked_listening_config()
+            except ListeningSetupIssue as exc:
+                return {"ready": False, "message": self.safe_error(exc), "page": exc.page, "provider": exc.provider}
+            return {"ready": True}
+
     def listen(self):
         with self.control_lock:
             with self.lock:
                 if self.listening:
                     return
-                config = self.store.config(decrypted=True)
-                reference_id = config["active"]["reference"]
-                reference = self.store.reference(reference_id, private=True) if reference_id else None
-                validate_listening_config(config, reference)
+                config = self._checked_listening_config()
                 audio_config = copy.deepcopy(config["audio"])
                 self.last_error = None
             self.audio.start(audio_config)

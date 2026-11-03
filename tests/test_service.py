@@ -161,6 +161,28 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(self.app.state.pipeline.audio.play_calls,0)
         self.assertEqual(self.client.get('/api/config').json()['audio']['auto_play'],before)
 
+    def test_readiness_locates_missing_reference_and_fallback_without_starting_audio(self):
+        pipeline = self.app.state.pipeline
+        config = self.client.get("/api/config").json()
+        issue = self.client.get("/api/listen/readiness").json()
+        self.assertFalse(issue["ready"])
+        self.assertEqual((issue["page"], issue["provider"]), ("voices", config["active"]["tts"]))
+        denied = self.client.post("/api/listen/start")
+        self.assertEqual(denied.status_code, 422)
+        self.assertEqual(denied.json()["detail"], issue["message"])
+        config["providers"].append({"id": "ready-local", "name": "就绪语音", "kind": "tts",
+            "type": "openai_tts", "base_url": "http://127.0.0.1:19765", "model": "tts", "voice": "test"})
+        config["active"].update(tts="ready-local", tts_fallback="elevenlabs")
+        self.assertEqual(self.client.put("/api/config", json=config).status_code, 200)
+        issue = self.client.get("/api/listen/readiness").json()
+        self.assertEqual((issue["ready"], issue["page"], issue["provider"]), (False, "models", "elevenlabs"))
+        self.assertIn("备用 TTS", issue["message"])
+        config["active"]["tts_fallback"] = ""
+        self.assertEqual(self.client.put("/api/config", json=config).status_code, 200)
+        self.assertEqual(self.client.get("/api/listen/readiness").json(), {"ready": True})
+        self.assertEqual(pipeline.audio.start_calls, 0)
+        self.assertEqual(self.providers.calls, [])
+
     def test_dpapi_key_redaction_keep_and_clear(self):
         config = self.client.get("/api/config").json()
         provider = next(p for p in config["providers"] if p["id"] == "cloud-llm")

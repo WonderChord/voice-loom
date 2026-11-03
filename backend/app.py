@@ -190,7 +190,7 @@ def create_app(data_dir: str | Path | None = None, *, providers=None, audio_fact
         from .sensevoice_client import close as close_sense_worker
         await run_in_threadpool(close_sense_worker)
 
-    app = FastAPI(title="声织 · 本机语音工作台", version="1.3.0", lifespan=lifespan, docs_url="/api/docs", openapi_url="/api/openapi.json", redoc_url=None)
+    app = FastAPI(title="声织 · 本机语音工作台", version="1.3.1", lifespan=lifespan, docs_url="/api/docs", openapi_url="/api/openapi.json", redoc_url=None)
     app.add_middleware(LocalOnlyMiddleware, access=access)
     app.state.store = store
     app.state.pipeline = pipeline
@@ -226,7 +226,7 @@ def create_app(data_dir: str | Path | None = None, *, providers=None, audio_fact
 
     @app.get("/api/health")
     def health(request: Request):
-        result = {"ok": True, "name": "声织", "version": "1.3.0", "security_version": 1, "listening": pipeline.listening}
+        result = {"ok": True, "name": "声织", "version": "1.3.1", "security_version": 1, "listening": pipeline.listening}
         proof = access.health_proof(request.query_params.get("challenge", ""))
         if proof:
             result["proof"] = proof
@@ -393,6 +393,10 @@ def create_app(data_dir: str | Path | None = None, *, providers=None, audio_fact
     @app.get("/subtitles", response_class=HTMLResponse)
     def subtitle_browser_source():
         return HTMLResponse(SUBTITLE_HTML, headers={"Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'"})
+
+    @app.get("/api/listen/readiness")
+    def listen_readiness():
+        return pipeline.listening_readiness()
 
     @app.post("/api/listen/start")
     def listen_start():
