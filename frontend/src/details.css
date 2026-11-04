@@ -61,19 +61,7 @@
   font-size: 9px;
   padding: 3px 5px;
 }
-.pipeline-step > div:nth-child(2) {
-  min-width: 0;
-}
-.pipeline-step small {
-  max-width: 102px;
-}
 @media (max-width: 1180px) {
-  .pipeline-step small {
-    max-width: 68px;
-  }
-  .pipeline-step .step-arrow {
-    width: 10px;
-  }
   .entry-audit {
     flex-wrap: wrap;
   }
@@ -125,76 +113,11 @@
   margin: 17px 0;
 }
 @media (min-width: 1100px) and (min-height: 780px) {
-  .studio-grid {
-    align-items: start;
-  }
-  .inspector {
-    max-height: calc(100vh - 292px);
-    overflow-y: auto;
-    padding-right: 3px;
-  }
-  .studio-main {
-    height: calc(100vh - 300px);
-    min-height: 650px;
-  }
-  .studio-main .input-card {
-    flex-shrink: 0;
-  }
-  .studio-main .conversation {
-    min-height: 220px;
-    display: flex;
-    flex-direction: column;
-  }
-  .studio-main .conversation-heading {
-    flex-shrink: 0;
-  }
-  .studio-main .entries {
-    flex: 1;
-    min-height: 0;
-    max-height: none;
-  }
-  .studio-main .empty-studio {
-    min-height: 100%;
-    padding: 20px;
-  }
-  .studio-main .empty-emblem {
-    width: 48px;
-    height: 48px;
-    margin-bottom: 10px;
-  }
   .voice-inspector {
     padding: 14px 17px;
   }
   .voice-identity {
     margin: 13px 0;
-  }
-  .inspector .compact-card {
-    padding: 14px 17px;
-  }
-  .inspector .compact-field {
-    margin-bottom: 8px;
-  }
-  .inspector .compact-field select {
-    padding: 7px;
-  }
-  .inspector .inspector-divider {
-    margin-top: 12px;
-  }
-  .inspector .persona-preview p {
-    -webkit-line-clamp: 2;
-  }
-  .inspector .context-stat {
-    margin-top: 12px;
-  }
-  .inspector .hint {
-    margin-top: 9px;
-    font-size: 10px;
-  }
-  .inspector .toggle-row {
-    padding: 8px 0;
-  }
-  .inspector .toggle-row small {
-    font-size: 9px;
   }
 }
 
@@ -300,23 +223,6 @@
     -12px 0;
 }
 @media (max-height: 850px) {
-  .studio-content .pipeline-strip {
-    padding: 12px 16px;
-    margin-bottom: 14px;
-  }
-  .studio-content .input-card {
-    padding: 12px 16px 10px;
-  }
-  .studio-content .input-card .card-heading {
-    margin-bottom: 8px;
-  }
-  .studio-content .live-wave {
-    height: 24px;
-    margin-top: 4px;
-  }
-  .studio-content .wave-footer {
-    padding-top: 6px;
-  }
   .studio-content .energy-status {
     padding-top: 6px;
     margin-top: 6px;

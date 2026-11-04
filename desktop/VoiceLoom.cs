@@ -17,7 +17,7 @@ using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.WinForms;
 
 [assembly: System.Reflection.AssemblyTitle("声织 Voice Loom")]
-[assembly: System.Reflection.AssemblyVersion("1.3.1.0")]
+[assembly: System.Reflection.AssemblyVersion("1.4.0.0")]
 [assembly: System.Runtime.Versioning.TargetFramework(".NETFramework,Version=v4.8")]
 
 internal static class Program
@@ -292,11 +292,11 @@ internal sealed class LoomWindow : Form
         Font = new Font("Microsoft YaHei UI", 9F);
         AutoScaleDimensions = new SizeF(96F, 96F); AutoScaleMode = AutoScaleMode.Dpi;
         ClientSize = new Size(1480, 900); MinimumSize = new Size(520, 320);
-        BackColor = Color.FromArgb(28, 38, 54); StartPosition = FormStartPosition.CenterScreen;
+        BackColor = Color.FromArgb(24, 27, 25); StartPosition = FormStartPosition.CenterScreen;
         Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
         view = new WebView2 { Dock = DockStyle.Fill, DefaultBackgroundColor = BackColor };
         cover = new Panel { Dock = DockStyle.Fill, BackColor = BackColor };
-        message = new Label { Dock = DockStyle.Fill, ForeColor = Color.FromArgb(230, 237, 246), TextAlign = ContentAlignment.MiddleCenter, Text = "声织\r\n正在启动本机工作台…", Font = new Font("Microsoft YaHei UI", 14F) };
+        message = new Label { Dock = DockStyle.Fill, ForeColor = Color.FromArgb(242, 241, 233), TextAlign = ContentAlignment.MiddleCenter, Text = "声织\r\n正在启动本机工作台…", Font = new Font("Microsoft YaHei UI", 14F) };
         FlowLayoutPanel actions = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 52, FlowDirection = FlowDirection.LeftToRight, Padding = new Padding(16, 5, 0, 0) };
         Button retry = new Button { Text = "重新连接", AutoSize = true }; retry.Click += async delegate { await Initialize(); };
         Button logs = new Button { Text = "打开日志目录", AutoSize = true }; logs.Click += delegate { Process.Start("explorer.exe", "\"" + Program.Home + "\""); };
@@ -391,7 +391,7 @@ internal sealed class LoomWindow : Form
     }
     private void UpdateCaption()
     {
-        int dark = 1, background = 0x0036261c, foreground = 0x00f6ede6;
+        int dark = 1, background = 0x00191b18, foreground = 0x00e9f1f2;
         DwmSetWindowAttribute(Handle, 20, ref dark, 4);
         DwmSetWindowAttribute(Handle, 35, ref background, 4);
         DwmSetWindowAttribute(Handle, 36, ref foreground, 4);

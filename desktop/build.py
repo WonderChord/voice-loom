@@ -15,7 +15,7 @@ import requests
 
 ROOT = Path(__file__).resolve().parents[1]
 DESKTOP = ROOT / 'desktop'
-VERSION = '1.3.1'
+VERSION = '1.4.0'
 FLAGS = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
 SDK_VERSION = '1.0.4258.31'
 SDK_URL = f'https://api.nuget.org/v3-flatcontainer/microsoft.web.webview2/{SDK_VERSION}/microsoft.web.webview2.{SDK_VERSION}.nupkg'
@@ -68,11 +68,11 @@ def download(url, digest, cache, label):
 
 def icon(path):
     from PIL import Image, ImageDraw
-    image = Image.new('RGBA', (256, 256), '#101b2a')
+    image = Image.new('RGBA', (256, 256), (0, 0, 0, 0))
     draw = ImageDraw.Draw(image)
-    draw.rounded_rectangle((8, 8, 247, 247), radius=55, fill='#17283b')
-    for x, height in zip((55, 85, 115, 145, 175, 205), (45, 90, 148, 108, 66, 32)):
-        draw.rounded_rectangle((x-7, 128-height//2, x+7, 128+height//2), radius=7, fill='#81dbc9')
+    draw.rounded_rectangle((2, 2, 253, 253), radius=62, fill='#efb56c')
+    for x, top, bottom in [(8,20,26), (14,12,27), (20,7,20), (20,26,33), (26,11,16), (26,22,28), (32,15,23)]:
+        draw.rounded_rectangle((int(x*6.4)-12, int(top*6.4)-12, int(x*6.4)+12, int(bottom*6.4)+12), radius=12, fill='#24231f')
     image.save(path, sizes=[(s, s) for s in (16, 24, 32, 48, 64, 128, 256)])
 
 def license_bundle(payload, sdk):

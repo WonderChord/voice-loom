@@ -105,7 +105,7 @@ export function PromptsPage({ config, change, save, run, notify }: Props) {
     <>
       <div className="page-intro">
         <div>
-          <h2>语气跟随模型，风格属于角色</h2>
+          <h2>语言与表演风格</h2>
           <p>选择输出语言，再按需要调整角色风格与语气。</p>
         </div>
       </div>

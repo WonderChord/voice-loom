@@ -11,7 +11,7 @@ export function applyTheme(accent: string, mode: "dark" | "light") {
       y = luminance(b);
     return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05);
   };
-  const background = mode === "light" ? [251, 252, 250] : [37, 49, 70];
+  const background = mode === "light" ? [255, 253, 247] : [35, 39, 36];
   let ink = [...channels];
   for (let i = 0; i < 30 && contrast(ink, background) < 4.7; i++)
     ink = ink.map((c) => (mode === "light" ? c * 0.9 : c + (255 - c) * 0.1));
@@ -21,7 +21,7 @@ export function applyTheme(accent: string, mode: "dark" | "light") {
   root.style.setProperty("--accent-ink", `rgb(${ink.map(Math.round).join(",")})`);
   root.style.setProperty(
     "--on-accent",
-    contrast(channels, [18, 37, 29]) >= contrast(channels, [255, 255, 255]) ? "#12251d" : "#ffffff",
+    contrast(channels, [33, 29, 22]) >= contrast(channels, [255, 255, 255]) ? "#211d16" : "#ffffff",
   );
   root.dataset.theme = mode;
 }

@@ -104,7 +104,7 @@ def default_providers() -> list[Provider]:
 
 
 class Appearance(Model):
-    accent: str = Field(default="#79d9bc", pattern=r"^#[0-9a-fA-F]{6}$")
+    accent: str = Field(default="#efb56c", pattern=r"^#[0-9a-fA-F]{6}$")
     mode: Literal["dark", "light"] = "dark"
 
 

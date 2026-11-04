@@ -1,5 +1,5 @@
 import { useRef } from "react";
-import { FileAudio, PenLine, Send, X } from "lucide-react";
+import { Eye, FileAudio, PenLine, Send, Volume2, X } from "lucide-react";
 import { api, type Config } from "./types";
 
 export type StudioDraft = { text: string; preview: boolean; file: File | null; lastId?: string };
@@ -80,7 +80,7 @@ export function StudioComposer({
       <div className="composer-heading">
         <h2>
           <PenLine size={17} />
-          文字与录音
+          台词与录音
         </h2>
         <div className="segmented compact-segments" role="group" aria-label="提交方式">
           {([true, false] as const).map((value) => (
@@ -92,6 +92,7 @@ export function StudioComposer({
               disabled={busy}
               onClick={() => update({ preview: value })}
             >
+              {value ? <Eye size={14}/> : <Volume2 size={14}/>}
               {value ? "只预览" : "合成语音"}
             </button>
           ))}
@@ -149,7 +150,7 @@ export function StudioComposer({
               填入预览示例
             </button>
           )}
-          {!file && !!text && <small>{text.length} / 4000</small>}
+          {!file && <small className="draft-length" aria-label="草稿字数">{text.length} / 4000</small>}
         </div>
         <button
           className="primary composer-submit"

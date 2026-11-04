@@ -94,8 +94,8 @@ export function VoicesPage({
     <>
       <div className="page-intro">
         <div>
-          <h2>每一种声音，都有自己的位置</h2>
-          <p>收好参考录音、准确台词和音色标签，随时换回熟悉的表达。</p>
+          <h2>音色收藏架</h2>
+          <p>管理参考录音、台词和服务端音色绑定。</p>
         </div>
         <button className="primary" onClick={() => setImporting(true)}>
           <Plus size={17} />
@@ -125,6 +125,10 @@ export function VoicesPage({
           />
         </div>
       </div>
+      {voices.length > 0 && !list.length && <div className="library-empty">
+        <Search size={18}/>没有符合条件的音色
+        <button onClick={() => { setQuery(""); setFilter("all"); }}>显示全部</button>
+      </div>}
       <div className="voice-grid">
         {list.map((v, i) => (
           <article
@@ -132,7 +136,7 @@ export function VoicesPage({
             key={v.id}
           >
             <div className="row between">
-              <div className={"avatar tone-" + (i % 4)}>{v.name[0]}</div>
+              <div className="voice-file-label"><span className={"avatar tone-" + (i % 4)}>{v.name[0]}</span><small>VOICE / {(v.language || "—").toUpperCase()}</small></div>
               <div className="row tight">
                 <button
                   className={"icon " + (v.pinned ? "highlight" : "")}
@@ -1033,12 +1037,12 @@ export function DevicesPage({
   );
 }
 export function AppearancePage({ config, change }: { config: Config; change: Change }) {
-  const a = config.appearance || { accent: "#79d9bc", mode: "dark" };
+  const a = config.appearance || { accent: "#efb56c", mode: "dark" };
   const colors = [
+    ["琥珀", "#efb56c"],
     ["薄荷", "#79d9bc"],
     ["鸢尾", "#b8a0ee"],
     ["暮蓝", "#80b8ef"],
-    ["琥珀", "#e8ba77"],
     ["蔷薇", "#e79fb1"],
     ["青柠", "#bfd87a"],
   ];
@@ -1046,8 +1050,8 @@ export function AppearancePage({ config, change }: { config: Config; change: Cha
     <>
       <div className="page-intro">
         <div>
-          <h2>给工作台，换一种心情</h2>
-          <p>主题色会应用到按钮、选中状态、音量显示和工作流。保存后下次自动恢复。</p>
+          <h2>界面配色</h2>
+          <p>选择底色，再调整按钮和选中状态的强调色。保存后下次打开仍会使用。</p>
         </div>
         <Palette size={30} />
       </div>
@@ -1058,13 +1062,15 @@ export function AppearancePage({ config, change }: { config: Config; change: Cha
             <button
               key={m}
               className={"theme-mode " + (a.mode === m ? "selected" : "")}
+              aria-pressed={a.mode === m}
               onClick={() => change({ appearance: { ...a, mode: m } })}
             >
+              <span className={"skin-sample skin-" + m} aria-hidden="true"><i/><span><b/><b/></span><em/></span>
               {m === "dark" ? <Moon size={21} /> : <Sun size={21} />}
               <div>
-                <b>{m === "dark" ? "深夜模式 · 雾蓝" : "浅色工作台"}</b>
+                <b>{m === "dark" ? "石墨录音室" : "暖白录音室"}</b>
                 <small>
-                  {m === "dark" ? "柔和暗蓝底色，适合长时间工作" : "清晰、轻盈，适合明亮环境"}
+                  {m === "dark" ? "暗色面板 · 石墨背景" : "浅色面板 · 暖白背景"}
                 </small>
               </div>
               {a.mode === m && <Check size={17} />}
@@ -1102,7 +1108,7 @@ export function AppearancePage({ config, change }: { config: Config; change: Cha
         <div className="theme-preview">
           <AudioLines size={26} />
           <div>
-            <b>你的表达，你的颜色</b>
+            <b>当前强调色</b>
             <p>主题预览 · Voice Loom</p>
           </div>
           <span className="chip active-chip">当前主题</span>

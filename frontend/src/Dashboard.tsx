@@ -13,7 +13,10 @@ import {
   Sparkles,
   Volume2,
   AlignLeft,
-  Scissors,
+  ChevronDown,
+  SlidersHorizontal,
+  Route,
+  Disc3,
   ShieldCheck,
   ShieldAlert,
   LoaderCircle,
@@ -36,6 +39,7 @@ import {
   llmConnectionIssue,
 } from "./types";
 import { Field, Toggle, AudioPreview } from "./components";
+import { SessionMonitor } from "./SessionMonitor";
 import { StudioComposer, type StudioDraft } from "./StudioComposer";
 
 export type Readiness = { ready: true } | { ready: false; message: string; provider: string; page: string };
@@ -259,13 +263,8 @@ export function Dashboard({
       live = false;
     };
   }, [config.active.tts, config.providers]);
-  const [levels, setLevels] = useState<number[]>(Array(70).fill(0));
-  useEffect(() => {
-    setLevels((v) => [
-      ...v.slice(1),
-      runtime.listening ? Math.max(0, Math.min(1, (runtime.level_db + 65) / 65)) : 0,
-    ]);
-  }, [runtime.level_db, runtime.listening]);
+  const [pane, setPane] = useState<"voice" | "models" | "direction">("voice");
+  const [rackOpen, setRackOpen] = useState(false);
   const voice = voices.find((v) => v.id === config.active.reference),
     tts = config.providers.find((p) => p.id === config.active.tts),
     llm = config.providers.find((p) => p.id === config.active.llm && p.kind === "llm");
@@ -326,138 +325,30 @@ export function Dashboard({
   ];
   return (
     <>
-      <section className="pipeline-strip">
-        {stages.map((s, i) => (
-          <div className={"pipeline-step " + (s.active ? "active" : "")} key={s.name}>
-            <div className="step-icon">
-              <s.icon size={18} />
-            </div>
-            <div>
-              <b>{s.name}</b>
-              <small>{s.sub}</small>
-            </div>
-            {i < stages.length - 1 && <ChevronRight className="step-arrow" size={15} />}
-          </div>
-        ))}
-      </section>
-      <div className="studio-grid">
-        <div className="studio-main">
-          {runtime.tts_failover && <div className="notice failover-banner" role="status">
-            <b>正在使用备用 TTS · {runtime.tts_failover.fallback_name}</b>
-            <span>主 TTS {runtime.tts_failover.primary_name} 不可达，自 {new Date(runtime.tts_failover.since).toLocaleTimeString("zh-CN")} 起自动切换；恢复后切回。</span>
-            <small>{runtime.tts_failover.reason}</small>
-          </div>}
-          <section className={"card input-card " + (runtime.listening ? "mic-live" : "mic-idle")}>
-            <div className="card-heading">
-              <h2>
-                <span className={"mic-icon " + (runtime.listening ? "listening" : "")}>
-                  <Mic size={18} />
-                </span>
-                实时输入
-              </h2>
-              <span className="muted small">
-                {runtime.listening
-                  ? runtime.playing && config.audio.suppress_during_playback
-                    ? "播放中 · 防回授保护"
-                    : "正在倾听…"
-                  : "麦克风待命"}
-              </span>
-            </div>
-            {readiness && !readiness.ready && !dirty && !runtime.listening && (
-              <div className="readiness-note" role="status">
-                <CircleAlert size={17} />
-                <div><b>监听前还需设置</b><p>{readiness.message}</p></div>
-                <button type="button" onClick={() => navigate(readiness.page, readiness.provider)}>
-                  {readiness.page === "voices" ? "去选音色" : "配置服务"}<ArrowUpRight size={14} />
-                </button>
-              </div>
-            )}
-            <div className="input-device-row">
-              <select
-                aria-label="快捷选择输入设备"
-                value={config.audio.input_device ?? ""}
-                disabled={runtime.listening || busy}
-                onChange={(e) =>
-                  quick({
-                    audio: {
-                      ...config.audio,
-                      input_device: e.target.value === "" ? null : +e.target.value,
-                    },
-                  })
-                }
-              >
-                <option value="">系统默认麦克风</option>
-                {devices.inputs.map((d) => (
-                  <option value={d.id} key={d.id}>
-                    {d.name} · {d.hostapi}
-                  </option>
-                ))}
-              </select>
-              <button className="text-button" onClick={() => navigate("devices")}>
-                音频设置
-                <ArrowUpRight size={13} />
-              </button>
-            </div>
-            <div
-              className={"live-wave " + (runtime.listening ? "listening" : "")}
-              aria-label={`当前音量${runtime.level_db.toFixed(0)}分贝`}
-            >
-              {levels.map((v, i) => (
-                <i
-                  key={i}
-                  style={{
-                    height: `${3 + v * 85}px`,
-                    opacity: 0.23 + v * 0.77,
-                  }}
-                />
-              ))}
-              <span className="wave-axis" />
-            </div>
-            <div className="wave-footer">
-              <span className="tiny">
-                <span className={"dot " + (runtime.listening ? "live" : "")} />
-                {runtime.listening ? "连续监听" : "等待开始"}
-              </span>
-              <span className="tiny">停顿 {config.audio.pause_ms}ms 后提交</span>
-              <span className="mono">
-                {runtime.listening ? `${runtime.level_db.toFixed(0)} dBFS` : "— dBFS"}
-              </span>
-            </div>
-            {runtime.listening && (
-              <button
-                className="text-button flush"
-                onClick={() => onRun(() => api("/listen/flush", { method: "POST" }))}
-              >
-                <Scissors size={13} />
-                立即提交当前片段
-              </button>
-            )}
-            {config.audio.skip_low_energy && (
-              <div className="energy-status">
-                <span>
-                  低音量过滤 · {config.audio.energy_threshold_db} dBFS /{" "}
-                  {config.audio.min_active_ms} ms
-                </span>
-                <span title={runtime.last_skip_reason || ""}>
-                  已跳过 {runtime.skipped_audio_count || 0} 段
-                </span>
-                {!!runtime.dropped_audio_count && (
-                  <span className="error-text">
-                    队列已满丢弃 {runtime.dropped_audio_count} 段
-                  </span>
-                )}
-              </div>
-            )}
-            {runtime.listening && runtime.tts_remote && (
-              <div className="energy-status" title={runtime.tts_remote.message}>
-                <span className={runtime.tts_remote.ok ? "" : "error-text"}>
-                  云端 TTS {runtime.tts_remote.provider} ·{" "}
-                  {runtime.tts_remote.ok ? `已连通 ${runtime.tts_remote.rtt_ms} ms` : "无法连接"}
-                </span>
-                <span>检查于 {new Date(runtime.tts_remote.checked_at).toLocaleTimeString()}</span>
-              </div>
-            )}
-          </section>
+      <SessionMonitor config={config} runtime={runtime} devices={devices} busy={busy}
+        selectInput={(input_device) => quick({ audio: { ...config.audio, input_device } })}
+        openDevices={() => navigate("devices")} openHistory={() => navigate("history")}
+        flush={() => onRun(() => api("/listen/flush", { method: "POST" }))} />
+      <details className="signal-route">
+        <summary><Route size={16}/><b>处理路径</b>
+          <span>{processingMode} <i>→</i> {runtime.tts_failover ? runtime.tts_failover.fallback_name + " · 备用" : tts?.name}</span>
+          <ChevronDown size={14}/></summary>
+        <ol>{stages.map((s) => <li key={s.name} className={s.active ? "active" : ""}>
+          <s.icon size={15}/><div><b>{s.name}</b><small>{s.sub}</small></div>
+        </li>)}</ol>
+      </details>
+      {runtime.tts_failover && <div className="notice failover-banner" role="status">
+        <b>正在使用备用 TTS · {runtime.tts_failover.fallback_name}</b>
+        <span>主 TTS {runtime.tts_failover.primary_name} 不可达，自 {new Date(runtime.tts_failover.since).toLocaleTimeString("zh-CN")} 起自动切换；恢复后切回。</span>
+        <small>{runtime.tts_failover.reason}</small>
+      </div>}
+      {readiness && !readiness.ready && !dirty && !runtime.listening && <div className="setup-strip" role="status">
+        <CircleAlert size={16}/><div><b>监听前还需设置</b><span>{readiness.message}</span></div>
+        <button onClick={() => navigate(readiness.page, readiness.provider)}>
+          {readiness.page === "voices" ? "去选音色" : "配置服务"}<ArrowUpRight size={14}/>
+        </button>
+      </div>}
+      <div className="desk-grid">
           <StudioComposer draft={draft} update={updateDraft} config={config} dirty={dirty} save={save}
             busy={busy} online={online} run={onRun} notify={notify}
             showResult={draft.lastId && runtime.records.slice(0, 30).some((r) => r.id === draft.lastId) ? () => {
@@ -468,7 +359,7 @@ export function Dashboard({
           <section className="card conversation">
             <div className="conversation-heading">
               <div className="conversation-tab">
-                转写与自检 <span>{runtime.records.length}</span>
+                会话记录 <span>{runtime.records.length}</span>
               </div>
               <a href="/api/export/session" download className="text-button">
                 <Download size={14} />
@@ -493,9 +384,17 @@ export function Dashboard({
               )}
             </div>
           </section>
-        </div>
-        <aside className="inspector">
-          <section className="card voice-inspector">
+        <aside className={"channel-rack card" + (rackOpen ? " rack-open" : "")}>
+          <div className="rack-heading"><h2><SlidersHorizontal size={17}/>通道设置</h2><span className="port-tag">OUT 01</span>
+            <button className="icon rack-toggle" aria-label={rackOpen ? "收起通道设置" : "展开通道设置"} aria-expanded={rackOpen}
+              onClick={() => setRackOpen(!rackOpen)}><ChevronDown size={16}/></button>
+          </div>
+          <div className="rack-inner">
+          <div className="rack-tabs" role="group" aria-label="通道设置分组">
+            {([["voice","音色"],["models","模型"],["direction","表演"]] as const).map(([key,label]) =>
+              <button key={key} aria-pressed={pane === key} onClick={() => setPane(key)}>{label}</button>)}
+          </div>
+          {pane === "voice" && <section className="rack-pane voice-inspector">
             <div className="card-heading">
               <h2>当前音色</h2>
               <button className="icon" aria-label="更换参考音色" onClick={() => navigate("voices")}>
@@ -503,7 +402,7 @@ export function Dashboard({
               </button>
             </div>
             <div className="voice-identity">
-              <div className="avatar">{voice?.name[0] || "声"}</div>
+              <div className="voice-disc" aria-hidden="true"><Disc3 size={33}/></div>
               <div>
                 <b>{voice?.name || (voiceId ? "服务预设音色" : "尚未选择音色")}</b>
                 <small>
@@ -518,8 +417,14 @@ export function Dashboard({
               <Headphones size={13} />
               {serviceVoice ? "声音 ID：" + (voiceId || "待设置") : mappedVoice ? "已绑定服务端预置音色" : "使用参考录音的音色合成"}
             </div>
-          </section>
-          <section className="card compact-card">
+            <dl className="rack-readout">
+              <div><dt>输出引擎</dt><dd>{outputTts?.name || "未设置"}</dd></div>
+              <div><dt>目标语言</dt><dd>{targetLanguageNames[targetLanguage]}</dd></div>
+              <div><dt>当前角色</dt><dd>{config.characters.find((c) => c.id === config.active_character)?.name || "未使用角色卡"}</dd></div>
+            </dl>
+            <button className="rack-link" onClick={() => navigate("voices")}>打开参考音色<ArrowUpRight size={14}/></button>
+          </section>}
+          {pane === "models" && <section className="rack-pane compact-card">
             <div className="card-heading">
               <h2>模型与人设</h2>
               <button className="icon" aria-label="模型设置" onClick={() => navigate("models", config.active.tts)}>
@@ -619,7 +524,7 @@ export function Dashboard({
               <p className={"hint " + (llmIssue ? "danger-text" : "")} role="status">
                 {llmIssue || `翻译与独立自检使用 ${llm?.name}。`}
                 {!config.rewrite_enabled && "仅翻译也需配置 LLM。"}{" "}
-                <button className="text-button" onClick={() => navigate("models")}>
+                <button className="text-button" onClick={() => navigate("models", config.active.llm)}>
                   配置连接 <ArrowUpRight size={12} />
                 </button>
               </p>
@@ -642,8 +547,8 @@ export function Dashboard({
             {!requiresLlm && (
               <p className="hint">当前原文直通，保持原语言与措辞。</p>
             )}
-          </section>
-          <section className="card compact-card">
+          </section>}
+          {pane === "direction" && <section className="rack-pane compact-card">
             <div className="card-heading">
               <h2>编排控制</h2>
               <span className="eyebrow">DIRECTION</span>
@@ -688,7 +593,8 @@ export function Dashboard({
               调整语音表演提示词
               <ArrowUpRight size={13} />
             </button>
-          </section>
+          </section>}
+          </div>
         </aside>
       </div>
     </>

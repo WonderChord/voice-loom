@@ -3,24 +3,13 @@ import {
   AudioLines,
   Mic,
   Square,
-  Users,
-  Boxes,
-  NotebookPen,
-  SlidersHorizontal,
-  History,
-  Palette,
   Save,
   Check,
   AlertCircle,
   LoaderCircle,
-  Volume2,
   Headphones,
   Download,
-  Plus,
   ChevronRight,
-  Captions,
-  Contact,
-  Menu,
   Undo2,
 } from "lucide-react";
 import {
@@ -40,6 +29,7 @@ import { applyTheme } from "./theme";
 import { SubtitlesPage } from "./SubtitlesPage";
 import { DesktopTools } from "./DesktopTools";
 import { DebugPanel } from "./DebugPanel";
+import { PageHeading, StudioMast } from "./StudioNav";
 import { CharactersPage } from "./CharactersPage";
 import {
   VoicesPage,
@@ -49,17 +39,6 @@ import {
   AppearancePage,
   HistoryPage,
 } from "./pages";
-const nav = [
-  { id: "studio", label: "工作台", icon: AudioLines },
-  { id: "voices", label: "参考音色", icon: Users },
-  { id: "models", label: "模型连接", icon: Boxes },
-  { id: "characters", label: "角色卡与读音", icon: Contact },
-  { id: "prompts", label: "人设与提示词", icon: NotebookPen },
-  { id: "devices", label: "设备与快捷键", icon: SlidersHorizontal },
-  { id: "subtitles", label: "直播字幕", icon: Captions },
-  { id: "history", label: "记录与用量", icon: History },
-  { id: "appearance", label: "外观主题", icon: Palette },
-];
 const emptyState: Runtime = {
   listening: false,
   playing: false,
@@ -223,7 +202,7 @@ export default function App() {
   }, [toast]);
   useEffect(() => {
     if (!config) return;
-    const a = config.appearance || { accent: "#79d9bc", mode: "dark" };
+    const a = config.appearance || { accent: "#efb56c", mode: "dark" };
     applyTheme(a.accent, a.mode);
   }, [config?.appearance]);
   const change = (patch: Partial<Config>) => {
@@ -321,94 +300,19 @@ export default function App() {
     runtime.stage !== "idle" ? (statusNames[runtime.stage] || "处理中") :
     runtime.listening ? "监听中" : "待机";
   const setupIssue = !dirty && !runtime.listening && readiness && !readiness.ready ? readiness : null;
-  const navButtons = nav.map((n) => (
-    <button className={page === n.id ? "selected" : ""} key={n.id}
-      aria-label={n.label} aria-current={page === n.id ? "page" : undefined}
-      title={n.label} onClick={() => navigate(n.id)}>
-      <n.icon size={19} /><span>{n.label}</span>{page === n.id && <span className="nav-dot" />}
-    </button>
-  ));
   return (
     <div className="app-shell">
-      <aside className="sidebar">
-        <a
-          className="brand"
-          href="#"
-          onClick={(e) => {
-            e.preventDefault();
-            setPage("studio");
-          }}
-        >
-          <span className="brand-mark">
-            <AudioLines size={30} />
-          </span>
-          <span>
-            <b>声织</b>
-            <small>VOICE LOOM</small>
-          </span>
-        </a>
-        <div className="nav-label">创作空间</div>
-        <nav aria-label="主导航">{navButtons}</nav>
-        <div className="session-card">
-          <div className="row between">
-            <span>当前会话</span>
-            <span className={"dot " + (runtime.listening ? "live" : "")} />
-          </div>
-          <b>{sessionState}</b>
-          <div className="session-count">
-            <span>
-              已完成 <strong>{runtime.records.filter((r) => r.status === "done").length}</strong>
-            </span>
-            <span>
-              排队 <strong>{runtime.queue_size}</strong>
-            </span>
-          </div>
-          <button className="subtle full" onClick={() => setClearConfirm(true)}>
-            <Plus size={16} />
-            新建会话
+      <header className="studio-mast">
+        <StudioMast page={page} go={navigate} menuOpen={menuOpen} setMenuOpen={setMenuOpen}
+          online={online} newSession={() => setClearConfirm(true)}>
+          <DesktopTools />
+          <button className={runtime.listening ? "stop-button mast-listen" : "primary mast-listen"}
+            disabled={busy || !online} title={setupIssue?.message}
+            onClick={() => setupIssue ? navigate(setupIssue.page, setupIssue.provider) : startStop()}>
+            {busy ? <LoaderCircle className="spin" size={16}/> : runtime.listening ? <Square size={14}/> : <Mic size={16}/>}
+            {runtime.listening ? "停止监听" : setupIssue ? "设置监听" : dirty ? "保存并监听" : "开始监听"}
           </button>
-        </div>
-        <div className="local-note">
-          <span className={"dot " + (online ? "live" : "bad")} />{" "}
-          {online ? "本机工作空间" : "服务已断开"}
-          <span>v1.3.1</span>
-        </div>
-      </aside>
-      <div className="main-shell">
-        <header className={"topbar" + (dirty ? " with-changes" : "")}>
-          <div className="page-identity">
-            <button className="icon mobile-nav-button" aria-label="打开导航" title="打开导航"
-              aria-haspopup="dialog" onClick={() => setMenuOpen(true)}><Menu size={20} /></button>
-            <div>
-            <div className="eyebrow">
-              VOICE WORKSPACE <span>/</span>{" "}
-              {String(nav.findIndex((n) => n.id === page) + 1).padStart(2, "0")}
-            </div>
-            <h1>{nav.find((n) => n.id === page)?.label}</h1>
-            </div>
-          </div>
-          <div className="top-actions">
-            <DesktopTools />
-            <span className="mode-badge">
-              <span className={"dot " + (!online ? "bad" : runtime.listening || runtime.stage !== "idle" ? "live" : "")} />
-              {sessionState}
-            </span>
-            <button
-              className={runtime.listening ? "stop-button" : "primary"}
-              disabled={busy || !online}
-              onClick={() => setupIssue ? navigate(setupIssue.page, setupIssue.provider) : startStop()}
-              title={setupIssue?.message}
-            >
-              {busy ? (
-                <LoaderCircle className="spin" size={17} />
-              ) : runtime.listening ? (
-                <Square size={16} />
-              ) : (
-                <Mic size={17} />
-              )}{" "}
-              {runtime.listening ? "停止监听" : setupIssue ? "设置监听" : dirty ? "保存并监听" : "开始监听"}
-            </button>
-          </div>
+        </StudioMast>
           {dirty && <div className="settings-changes" aria-label="未保存的设置">
             <span><i />设置未保存</span>
             <button type="button" title="恢复上次保存的设置" disabled={busy} onClick={discard}><Undo2 size={14} />撤销更改</button>
@@ -416,7 +320,8 @@ export default function App() {
               <Save size={14} />保存更改
             </button>
           </div>}
-        </header>
+      </header>
+      <div className="studio-shell-body">
         {!online && (
           <div className="connection-banner">
             <AlertCircle size={16} />
@@ -424,6 +329,9 @@ export default function App() {
           </div>
         )}
         <main className={"page-content " + (page === "studio" ? "studio-content" : "")}>
+          <PageHeading page={page} go={navigate}>
+            <span className={"session-badge" + (runtime.listening || runtime.playing ? " live" : "")}><i/>{sessionState}</span>
+          </PageHeading>
           {page === "studio" && (
             <Dashboard
               config={config}
@@ -492,11 +400,9 @@ export default function App() {
           )}
           {page === "history" && <HistoryPage runtime={runtime} onEdit={editEntry} onPlay={play} />}
         </main>
-        <footer className="transport">
+        <footer className="transport booth-transport" aria-label="输出控制">
           <div className="transport-label">
-            <span className="transport-icon">
-              <Volume2 size={19} />
-            </span>
+            <span className="output-tag" aria-hidden="true">OUT</span>
             <div>
               <b>{runtime.playing ? "正在输出" : "语音输出"}</b>
               <small>{runtime.tts_failover ? `${runtime.tts_failover.fallback_name} · 备用` : activeTts?.name || "选择合成引擎"}</small>
@@ -526,17 +432,7 @@ export default function App() {
               </option>
             ))}
           </select>
-          <div className="transport-wave">
-            {Array.from({ length: 37 }, (_, i) => (
-              <i
-                key={i}
-                style={{
-                  height: `${runtime.playing ? 8 + ((i * 13) % 27) : 3}px`,
-                }}
-                className={runtime.playing ? "active" : ""}
-              />
-            ))}
-          </div>
+          <div className="bus-line" aria-hidden="true" />
           <span className="transport-voice">{activeVoice?.name || "未选参考音色"}</span>
           <button
             className="icon"
@@ -554,10 +450,6 @@ export default function App() {
           <DebugPanel runtime={runtime} />
         </footer>
       </div>
-      {menuOpen && <Modal title="页面导航" onClose={() => setMenuOpen(false)}>
-        <nav className="mobile-nav-grid" aria-label="页面导航">{navButtons}</nav>
-        <button className="full" onClick={() => { setMenuOpen(false); setClearConfirm(true); }}><Plus size={16} />新建会话</button>
-      </Modal>}
       {toast && (
         <div className={"toast " + (toast.error ? "error" : "")} role="status">
           {toast.error ? <AlertCircle size={18} /> : <Check size={18} />}
