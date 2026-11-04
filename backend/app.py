@@ -22,7 +22,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response, StreamingResponse
 from starlette.concurrency import run_in_threadpool
 
-from .models import Config, PronunciationPreview, ReferencePatch, SynthesizeRequest, TextRequest
+from .models import Config, OutputSelection, PronunciationPreview, ReferencePatch, SynthesizeRequest, TextRequest
 from . import pronunciation
 from .pipeline import BusyError, Cancelled, Pipeline
 from .store import Store
@@ -190,7 +190,7 @@ def create_app(data_dir: str | Path | None = None, *, providers=None, audio_fact
         from .sensevoice_client import close as close_sense_worker
         await run_in_threadpool(close_sense_worker)
 
-    app = FastAPI(title="声织 · 本机语音工作台", version="1.4.0", lifespan=lifespan, docs_url="/api/docs", openapi_url="/api/openapi.json", redoc_url=None)
+    app = FastAPI(title="声织 · 本机语音工作台", version="1.4.1", lifespan=lifespan, docs_url="/api/docs", openapi_url="/api/openapi.json", redoc_url=None)
     app.add_middleware(LocalOnlyMiddleware, access=access)
     app.state.store = store
     app.state.pipeline = pipeline
@@ -226,7 +226,7 @@ def create_app(data_dir: str | Path | None = None, *, providers=None, audio_fact
 
     @app.get("/api/health")
     def health(request: Request):
-        result = {"ok": True, "name": "声织", "version": "1.4.0", "security_version": 1, "listening": pipeline.listening}
+        result = {"ok": True, "name": "声织", "version": "1.4.1", "security_version": 1, "listening": pipeline.listening}
         proof = access.health_proof(request.query_params.get("challenge", ""))
         if proof:
             result["proof"] = proof
@@ -308,6 +308,10 @@ def create_app(data_dir: str | Path | None = None, *, providers=None, audio_fact
     @app.put("/api/config")
     def put_config(config: Config):
         return pipeline.update_config(config)
+
+    @app.post("/api/output/select")
+    def select_output(change: OutputSelection):
+        return pipeline.select_output(change)
 
     @app.post("/api/characters/{character_id}/apply")
     def apply_character(character_id: str):

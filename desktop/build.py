@@ -15,7 +15,7 @@ import requests
 
 ROOT = Path(__file__).resolve().parents[1]
 DESKTOP = ROOT / 'desktop'
-VERSION = '1.4.0'
+VERSION = '1.4.1'
 FLAGS = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
 SDK_VERSION = '1.0.4258.31'
 SDK_URL = f'https://api.nuget.org/v3-flatcontainer/microsoft.web.webview2/{SDK_VERSION}/microsoft.web.webview2.{SDK_VERSION}.nupkg'

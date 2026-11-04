@@ -14,7 +14,7 @@ import time
 import uuid
 from urllib.parse import urlsplit
 
-from .models import Config, Plan
+from .models import Config, OutputSelection, Plan
 from . import hotkeys, language
 from .energy import check_file_energy
 from .store import Store
@@ -334,6 +334,18 @@ class Pipeline:
             self.apply_character(ids[index])
         elif action.startswith("character:"):
             self.apply_character(action.split(":", 1)[1])
+
+    def select_output(self, change: OutputSelection) -> dict:
+        """仅改选中的一项，保留快捷键或其他客户端刚应用的配置。"""
+        if change.target == "character" and change.id:
+            return self.apply_character(change.id)
+        with self.control_lock:
+            value = self.store.config()
+            if change.target == "character":
+                value["active_character"] = ""
+            else:
+                value["active"][change.target] = change.id
+            return {"config": self.update_config(Config.model_validate(value)), "warnings": []}
 
     def apply_character(self, character_id: str) -> dict:
         """切换角色卡：把卡上的音色、TTS、人设、语言和情绪强度写入当前设置；监听中也可切换，下一句生效。"""

@@ -29,7 +29,8 @@ import { applyTheme } from "./theme";
 import { SubtitlesPage } from "./SubtitlesPage";
 import { DesktopTools } from "./DesktopTools";
 import { DebugPanel } from "./DebugPanel";
-import { PageHeading, StudioMast } from "./StudioNav";
+import { PageHeading, PageList, StudioMast } from "./StudioNav";
+import { activeFailover, StudioSwitches, type OutputTarget } from "./StudioSwitches";
 import { CharactersPage } from "./CharactersPage";
 import {
   VoicesPage,
@@ -86,7 +87,7 @@ export default function App() {
   const revision = useRef(0);
   const operations = useRef(0);
   const navigate = (next: string, providerId = "") => {
-    if (next === "models") setModelTarget((last) => ({ id: providerId, visit: last.visit + 1 }));
+    if (next === "models") setModelTarget((last) => ({ id: providerId || config?.active.tts || "", visit: last.visit + 1 }));
     setPage(next);
     setMenuOpen(false);
   };
@@ -263,20 +264,29 @@ export default function App() {
         notify("已开始持续监听，停顿后自动转述");
       }
     });
-  const applyCharacter = (id: string) =>
+  const selectOutput = (target: OutputTarget, id: string) =>
     run(async () => {
-      if (dirty) await save();
-      const result = await api<{ config: Config; warnings: string[] }>(`/characters/${id}/apply`, {
-        method: "POST",
+      if (dirtyRef.current) throw new Error("请先保存或撤销更改，再切换");
+      const result = await api<{ config: Config; warnings: string[] }>("/output/select", {
+        method: "POST", body: JSON.stringify({ target, id }),
       });
-      setConfig(result.config);
+      const baseline = savedConfig.current;
       savedConfig.current = result.config;
       revision.current += 1;
-      dirtyRef.current = false;
-      setDirty(false);
-      const name = result.config.characters.find((c) => c.id === id)?.name || "";
-      notify(result.warnings.length ? result.warnings.join("；") : `已切换到角色「${name}」`, result.warnings.length > 0);
+      const hasNewEdits = dirtyRef.current;
+      setConfig((pending) => {
+        if (!hasNewEdits || !baseline || !pending) return result.config;
+        // Keep edits started on another page while the switch was saving.
+        const edits = Object.entries(pending).filter(([key, value]) =>
+          JSON.stringify(value) !== JSON.stringify(baseline[key as keyof Config]));
+        return { ...result.config, ...Object.fromEntries(edits) };
+      });
+      const name = (target === "character" ? result.config.characters : result.config.providers).find((p) => p.id === id)?.name;
+      const message = target === "character" ? (id ? `已切换到角色「${name}」` : "已停用角色卡，保留当前声音和人设设置") :
+        target === "tts" ? `主 TTS 已切换为「${name}」` : id ? `备用 TTS 已设为「${name}」` : "已关闭备用 TTS";
+      notify([message, ...result.warnings].join("；"), result.warnings.length > 0);
     });
+  const applyCharacter = (id: string) => selectOutput("character", id);
   const editEntry = (entry: Entry) => {
     if (entry.plan) setEditing({ entry, plan: structuredClone(entry.plan) });
   };
@@ -294,8 +304,10 @@ export default function App() {
         <button onClick={() => location.reload()}>重新连接</button>
       </div>
     );
-  const activeVoice = voices.find((v) => v.id === config.active.reference),
-    activeTts = config.providers.find((p) => p.id === config.active.tts);
+  const liveConfig = (dirty && savedConfig.current) || config;
+  const activeVoice = voices.find((v) => v.id === liveConfig.active.reference),
+    activeTts = liveConfig.providers.find((p) => p.id === liveConfig.active.tts);
+  const failover = activeFailover(liveConfig, runtime);
   const sessionState = !online ? "已断开" : runtime.playing ? "播放中" :
     runtime.stage !== "idle" ? (statusNames[runtime.stage] || "处理中") :
     runtime.listening ? "监听中" : "待机";
@@ -328,11 +340,16 @@ export default function App() {
             本机服务已断开。请重新运行启动程序，页面会自动重连。
           </div>
         )}
+        <div className="studio-layout">
+        <PageList page={page} go={navigate} />
         <main className={"page-content " + (page === "studio" ? "studio-content" : "")}>
-          <PageHeading page={page} go={navigate}>
+          <PageHeading page={page}>
             <span className={"session-badge" + (runtime.listening || runtime.playing ? " live" : "")}><i/>{sessionState}</span>
           </PageHeading>
           {page === "studio" && (
+            <>
+            <StudioSwitches config={liveConfig} runtime={runtime} busy={busy} online={online}
+              dirty={dirty} navigate={navigate} select={selectOutput} />
             <Dashboard
               config={config}
               runtime={runtime}
@@ -351,8 +368,8 @@ export default function App() {
               notify={notify}
               save={save}
               dirty={dirty}
-              applyCharacter={applyCharacter}
             />
+            </>
           )}
           {page === "voices" && (
             <VoicesPage
@@ -377,6 +394,7 @@ export default function App() {
               save={save}
               applyCharacter={applyCharacter}
               dirty={dirty}
+              canSwitch={!dirty && !busy && online}
               run={run}
               notify={notify}
             />
@@ -400,12 +418,13 @@ export default function App() {
           )}
           {page === "history" && <HistoryPage runtime={runtime} onEdit={editEntry} onPlay={play} />}
         </main>
+        </div>
         <footer className="transport booth-transport" aria-label="输出控制">
           <div className="transport-label">
             <span className="output-tag" aria-hidden="true">OUT</span>
             <div>
               <b>{runtime.playing ? "正在输出" : "语音输出"}</b>
-              <small>{runtime.tts_failover ? `${runtime.tts_failover.fallback_name} · 备用` : activeTts?.name || "选择合成引擎"}</small>
+              <small>{failover ? `${failover.fallback_name} · 备用` : activeTts?.name || "选择合成引擎"}</small>
             </div>
           </div>
           <span className="divider" />

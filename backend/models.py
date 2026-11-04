@@ -66,6 +66,11 @@ class Active(Model):
     reference: str = ""
 
 
+class OutputSelection(Model):
+    target: Literal["character", "tts", "tts_fallback"]
+    id: str = Field(max_length=80)
+
+
 class AudioConfig(Model):
     input_device: int | None = Field(default=None, ge=0)
     output_device: int | None = Field(default=None, ge=0)

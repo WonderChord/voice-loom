@@ -435,6 +435,26 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(self.providers.calls, [])
         self.assertEqual(self.app.state.pipeline.history, [])
 
+    def test_live_tts_pick_preserves_card_just_applied_by_hotkey(self):
+        config = self.client.get("/api/config").json()
+        config["characters"] = [
+            {"id": "host", "name": "主持", "persona": "主持今天的直播", "tts": "breeze"},
+            {"id": "guest", "name": "来宾", "persona": "接主持人的话", "tts": "elevenlabs"},
+        ]
+        config["active_character"] = "host"
+        self.assertEqual(self.client.put("/api/config", json=config).status_code, 200)
+        # The UI still has host selected when a hotkey moves the live session to guest.
+        self.app.state.pipeline.hotkey("next_character")
+        pick = self.client.post("/api/output/select", json={"target": "tts", "id": "breeze"})
+        self.assertEqual(pick.status_code, 200)
+        saved = pick.json()["config"]
+        self.assertEqual((saved["active_character"], saved["persona"], saved["active"]["tts"]),
+                         ("guest", "接主持人的话", "breeze"))
+        self.assertEqual(saved["characters"][1]["tts"], "elevenlabs")
+        invalid = self.client.post("/api/output/select", json={"target": "tts", "id": "qwen"})
+        self.assertEqual(invalid.status_code, 422)
+        self.assertEqual(self.client.get("/api/config").json(), saved)
+
     def test_character_card_switches_voice_tts_style_and_pronunciation(self):
         first = self.client.post("/api/references", files={"file": ("a.wav", wav_bytes())},
                                  data={"transcript": "参考台词"}).json()

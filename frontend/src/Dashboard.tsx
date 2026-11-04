@@ -40,6 +40,7 @@ import {
 } from "./types";
 import { Field, Toggle, AudioPreview } from "./components";
 import { SessionMonitor } from "./SessionMonitor";
+import { activeFailover } from "./StudioSwitches";
 import { StudioComposer, type StudioDraft } from "./StudioComposer";
 
 export type Readiness = { ready: true } | { ready: false; message: string; provider: string; page: string };
@@ -61,7 +62,6 @@ type Props = {
   notify: (s: string, error?: boolean) => void;
   save: () => Promise<Config>;
   dirty: boolean;
-  applyCharacter: (id: string) => void;
 };
 export function EntryCard({
   entry,
@@ -243,18 +243,19 @@ export function Dashboard({
   notify,
   save,
   dirty,
-  applyCharacter,
   draft,
   updateDraft,
   online,
   readiness,
 }: Props) {
   const [caps, setCaps] = useState<Capabilities | null>(null);
+  const failover = activeFailover(config, runtime);
+  const outputId = failover?.fallback || config.active.tts;
   useEffect(() => {
     let live = true;
     api<Record<string, Capabilities>>("/capabilities")
       .then((c) => {
-        if (live) setCaps(c[config.active.tts] || null);
+        if (live) setCaps(c[outputId] || null);
       })
       .catch(() => {
         if (live) setCaps(null);
@@ -262,7 +263,7 @@ export function Dashboard({
     return () => {
       live = false;
     };
-  }, [config.active.tts, config.providers]);
+  }, [outputId, config.providers]);
   const [pane, setPane] = useState<"voice" | "models" | "direction">("voice");
   const [rackOpen, setRackOpen] = useState(false);
   const voice = voices.find((v) => v.id === config.active.reference),
@@ -276,7 +277,7 @@ export function Dashboard({
   const llmAudit = auditEnabled && (requiresLlm || !!config.active.audit_llm);
   const processingMode = processingModeLabel(targetLanguage, config.rewrite_enabled);
   const llmIssue = llmConnectionIssue(llm);
-  const outputTts = (runtime.tts_failover && config.providers.find((p) => p.id === runtime.tts_failover?.fallback)) || tts;
+  const outputTts = config.providers.find((p) => p.id === outputId);
   const mappedVoice = outputTts && (voice?.provider_voice_ids?.[outputTts.id] || voice?.provider_voice_ids?.[outputTts.type]);
   const serviceVoice = outputTts && ["elevenlabs", "fish_tts", "openai_tts"].includes(outputTts.type);
   const voiceId = mappedVoice || (serviceVoice ? outputTts?.voice : "");
@@ -318,7 +319,7 @@ export function Dashboard({
     },
     {
       name: "语音输出",
-      sub: runtime.tts_failover ? runtime.tts_failover.fallback_name + " · 备用" : tts?.name || "未设置",
+      sub: failover ? failover.fallback_name + " · 备用" : tts?.name || "未设置",
       icon: Volume2,
       active: stage === "tts" || runtime.playing,
     },
@@ -331,16 +332,16 @@ export function Dashboard({
         flush={() => onRun(() => api("/listen/flush", { method: "POST" }))} />
       <details className="signal-route">
         <summary><Route size={16}/><b>处理路径</b>
-          <span>{processingMode} <i>→</i> {runtime.tts_failover ? runtime.tts_failover.fallback_name + " · 备用" : tts?.name}</span>
+          <span>{processingMode} <i>→</i> {failover ? failover.fallback_name + " · 备用" : tts?.name}</span>
           <ChevronDown size={14}/></summary>
         <ol>{stages.map((s) => <li key={s.name} className={s.active ? "active" : ""}>
           <s.icon size={15}/><div><b>{s.name}</b><small>{s.sub}</small></div>
         </li>)}</ol>
       </details>
-      {runtime.tts_failover && <div className="notice failover-banner" role="status">
-        <b>正在使用备用 TTS · {runtime.tts_failover.fallback_name}</b>
-        <span>主 TTS {runtime.tts_failover.primary_name} 不可达，自 {new Date(runtime.tts_failover.since).toLocaleTimeString("zh-CN")} 起自动切换；恢复后切回。</span>
-        <small>{runtime.tts_failover.reason}</small>
+      {failover && <div className="notice failover-banner" role="status">
+        <b>正在使用备用 TTS · {failover.fallback_name}</b>
+        <span>主 TTS {failover.primary_name} 不可达，自 {new Date(failover.since).toLocaleTimeString("zh-CN")} 起自动切换；恢复后切回。</span>
+        <small>{failover.reason}</small>
       </div>}
       {readiness && !readiness.ready && !dirty && !runtime.listening && <div className="setup-strip" role="status">
         <CircleAlert size={16}/><div><b>监听前还需设置</b><span>{readiness.message}</span></div>
@@ -420,36 +421,17 @@ export function Dashboard({
             <dl className="rack-readout">
               <div><dt>输出引擎</dt><dd>{outputTts?.name || "未设置"}</dd></div>
               <div><dt>目标语言</dt><dd>{targetLanguageNames[targetLanguage]}</dd></div>
-              <div><dt>当前角色</dt><dd>{config.characters.find((c) => c.id === config.active_character)?.name || "未使用角色卡"}</dd></div>
             </dl>
             <button className="rack-link" onClick={() => navigate("voices")}>打开参考音色<ArrowUpRight size={14}/></button>
           </section>}
           {pane === "models" && <section className="rack-pane compact-card">
             <div className="card-heading">
-              <h2>模型与人设</h2>
+              <h2>识别、润色与翻译</h2>
               <button className="icon" aria-label="模型设置" onClick={() => navigate("models", config.active.tts)}>
                 <ChevronRight size={19} />
               </button>
             </div>
-            {(config.characters || []).length > 0 && (
-              <div className="compact-field">
-                <label htmlFor="quick-character">角色</label>
-                <select
-                  id="quick-character"
-                  value={config.active_character}
-                  disabled={busy}
-                  onChange={(e) => e.target.value && applyCharacter(e.target.value)}
-                >
-                  <option value="">未使用角色卡</option>
-                  {config.characters.map((c) => (
-                    <option value={c.id} key={c.id}>
-                      {c.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
-            {(["asr", "llm", "tts"] as const).map((kind) => (
+            {(["asr", "llm"] as const).map((kind) => (
               <div className="compact-field" key={kind}>
                 <label htmlFor={"quick-" + kind}>{kind.toUpperCase()}</label>
                 <select
@@ -472,17 +454,6 @@ export function Dashboard({
                 </select>
               </div>
             ))}
-            <div className="compact-field">
-              <label htmlFor="quick-tts-fallback">备用 TTS</label>
-              <select id="quick-tts-fallback" value={config.active.tts_fallback || ""} disabled={busy}
-                onChange={(e) => quick({ active: { ...config.active, tts_fallback: e.target.value } })}>
-                <option value="">不启用</option>
-                {config.providers.filter((p) => p.kind === "tts").map((p) => (
-                  <option key={p.id} value={p.id} disabled={p.id === config.active.tts}>{p.name}{p.id === config.active.tts ? "（当前主 TTS）" : ""}</option>
-                ))}
-              </select>
-            </div>
-            <p className="hint">备用推荐 Fish / ElevenLabs / OpenAI 等云端 API。先在模型连接保存密钥，并在参考音色中绑定该服务的声音 ID。</p>
             <div className="inspector-divider" />
             <Field label="目标语言（LLM翻译）" note="保留原意、称呼和人称。">
               <select

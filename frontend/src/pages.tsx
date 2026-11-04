@@ -468,7 +468,7 @@ export function ModelsPage({
       <div className="page-intro">
         <div>
           <h2>配置模型服务</h2>
-          <p>每个服务独立保存地址、模型和密钥。可添加多个云端连接并随时切换。</p>
+          <p>在这里配置并保存连接。临时换用其他服务，可直接在工作台选择主 TTS。</p>
         </div>
         <button onClick={add}>
           <Plus size={16} />
@@ -537,7 +537,7 @@ export function ModelsPage({
                     })
                   }
                 >
-                  设为当前
+                  {kind === "tts" ? "设为主 TTS" : "设为当前"}
                 </button>
               )}
               {kind === "asr" && (

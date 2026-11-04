@@ -29,6 +29,7 @@ type Props = {
   save: (next?: Config) => Promise<Config>;
   applyCharacter: (id: string) => void;
   dirty: boolean;
+  canSwitch: boolean;
   run: (fn: () => Promise<unknown>) => void;
   notify: (text: string, error?: boolean) => void;
 };
@@ -154,7 +155,7 @@ export function PronunciationEditor({
   );
 }
 
-export function CharactersPage({ config, hotkeyStatus, voices, change, save, applyCharacter, dirty, run, notify }: Props) {
+export function CharactersPage({ config, hotkeyStatus, voices, change, save, applyCharacter, dirty, canSwitch, run, notify }: Props) {
   const cards = config.characters || [];
   const [editingId, setEditingId] = useState(config.active_character || cards[0]?.id || "");
   const [newName, setNewName] = useState("");
@@ -226,16 +227,18 @@ export function CharactersPage({ config, hotkeyStatus, voices, change, save, app
           01 <span>CHARACTERS</span>
         </div>
         <h2>角色卡</h2>
-        <p>点「切换」立即生效，监听中切换从下一句开始。</p>
+        <p>{dirty ? "先保存或撤销更改，再使用角色卡。" : "点卡片查看或编辑；点「使用此卡」才会切换，下一句生效。"}</p>
         <div className="style-presets">
           {cards.map((card) => (
             <div
               key={card.id}
               className={"style-preset character-card " + (editingId === card.id ? "selected" : "")}
             >
-              <button className="character-pick" onClick={() => setEditingId(card.id)}>
+              <button className="character-pick" aria-label={"编辑角色卡：" + card.name} aria-pressed={editingId === card.id}
+                onClick={() => setEditingId(card.id)}>
                 <b>
-                  {config.active_character === card.id && <Check size={14} />} {card.name}
+                  {card.name}
+                  {config.active_character === card.id && <span className="card-in-use"><Check size={12} />使用中</span>}
                 </b>
                 <small>
                   {voiceName(card.reference)} · {providerName(card.tts)}
@@ -247,10 +250,10 @@ export function CharactersPage({ config, hotkeyStatus, voices, change, save, app
               </button>
               <button
                 className={config.active_character === card.id ? "" : "primary"}
-                disabled={config.active_character === card.id}
+                disabled={!canSwitch}
                 onClick={() => applyCharacter(card.id)}
               >
-                {config.active_character === card.id ? "当前角色" : "切换"}
+                {config.active_character === card.id ? "重新应用" : "使用此卡"}
               </button>
             </div>
           ))}
