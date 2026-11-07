@@ -1,5 +1,7 @@
 # MCP 与本机模型环境
 
+Drama3 表演稿可在 `speech.direction` 写不朗读的自然语言指导，`delivery` 选 `normal/whisper/soft/emphasis/stress/forceful/slow/fast`，点状声音单列 `event`；`text` 保持纯台词。先查询当前模型能力，再编排，详见 [Drama3 编排指南](DRAMA3.md)。确认合成仍使用原有独立操作。
+
 ## AI 助手连接
 
 在软件右上角“更多工具 → 连接 AI 助手”复制与当前安装路径匹配的配置。Codex 使用 `[mcp_servers.voice_loom]` 下的 `command` 和 `args`；其他客户端可使用提供的 `mcpServers` JSON。配置不包含 API Key 或本机会话令牌。

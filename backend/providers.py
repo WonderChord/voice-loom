@@ -21,6 +21,7 @@ from urllib.parse import quote, urlsplit
 from contextlib import contextmanager
 from contextvars import ContextVar
 import numpy as np
+import msgpack
 import requests
 import soundfile as sf
 
@@ -28,7 +29,8 @@ from . import language, local_runtime, performance, pronunciation
 from .resample import resample_poly
 
 EMOTIONS = ("neutral", "happy", "sad", "angry", "calm", "thoughtful", "excited")
-EVENTS = ("sigh", "laugh", "breath")
+EVENTS = tuple(performance.DRAMA_EVENTS)
+DELIVERIES = ('normal', *performance.DRAMA_DELIVERIES)
 DIRECTIONS = {
     "neutral": "自然清晰地说话，保留参考音色。", "happy": "带着开心和轻快的语气说话。",
     "sad": "带着难过和低落的语气说话。", "angry": "带着生气和坚定的语气说话。",
@@ -116,13 +118,14 @@ class ProviderReviewRequired(ProviderError):
 def capabilities(provider: dict) -> dict:
     kind, model = provider.get("type"), performance.model_id(provider)
     result = {"emotions": [], "events": [], "whisper": False, "speed": False,
-              "reference_audio": False, "instructions": False, "notes": []}
+              "reference_audio": False, "instructions": False, "notes": [],
+              "direction": False, "deliveries": ['normal']}
     if kind == "breeze":
         result.update(emotions=list(EMOTIONS), whisper=True, speed=True, reference_audio=True, instructions=True)
         result["notes"] = ["情绪、耳语、语速通过自然语言指令表达；速度倍率表示表演意图。", "叹气等独立声音动作需要选择支持动作的 TTS。"]
     elif kind == "elevenlabs":
         tagged = model in performance.ELEVEN_TAG_MODELS
-        result.update(emotions=list(EMOTIONS) if tagged else [], events=list(EVENTS) if tagged else [],
+        result.update(emotions=list(EMOTIONS) if tagged else [], events=['sigh', 'laugh', 'breath'] if tagged else [],
                       whisper=tagged, speed=True, instructions=tagged)
         result["notes"] = ["使用云端音色 ID；速度支持 0.7～1.2。"]
         if not tagged:
@@ -135,20 +138,22 @@ def capabilities(provider: dict) -> dict:
         result.update(reference_audio=True, speed=True)
         result["notes"] = ["参考音频决定音色和主要风格，speed_factor 控制语速；此接口没有情绪、耳语和声音动作字段。"]
     elif kind == "drama3_local":
-        result.update(emotions=list(EMOTIONS), events=["sigh", "laugh"], whisper=True,
+        result.update(emotions=list(EMOTIONS), events=list(performance.DRAMA_EVENTS), whisper=True,
                       reference_audio=True, instructions=True)
         result["notes"] = ["使用参考语音或服务端预置音色，耳语编译为成对标签。", "引擎使用默认语速，可通过独立停顿片段调整节奏。"]
     elif kind == "fish_tts":
         tagged = performance.is_tagged(provider)
         events = [event for event in EVENTS if performance.compile_event(provider, event)]
-        result.update(emotions=list(EMOTIONS) if tagged else [], events=events,
+        result.update(emotions=list(EMOTIONS) if tagged else [], events=events, reference_audio=True,
                       whisper=tagged, speed=True, instructions=tagged)
-        result["notes"] = ["使用 Fish 已有云端音色 ID（reference_id），速度支持 0.5～2。",
-                           "Drama3 的耳语使用成对标签；本地参考语音可绑定已有的云端音色。"]
+        result["notes"] = ["已绑定的 Fish 音色 ID 优先；无 ID 时通过 MessagePack 发送当前参考录音及准确转写。",
+                           "Drama3 将表演指导、点状声音和成对局部标签分别编译，先切短句再加标签。"]
         if performance.model_id(provider) not in performance.FISH_MODELS:
             result["notes"].append("请填写受支持的 Fish 模型名，合成前将校验模型以避免服务自动回退。")
     else:
         result["notes"] = ["此配置不是语音合成引擎。"]
+    result['direction'] = performance.is_drama(provider)
+    result['deliveries'] = list(DELIVERIES) if result['direction'] else (['normal', 'whisper'] if result['whisper'] else ['normal'])
     result.update(performance.describe_rules(provider))
     return result
 
@@ -205,11 +210,16 @@ def validate_plan(plan: dict, source_text: str | None = None) -> dict:
             if emotion not in EMOTIONS:
                 raise ProviderError("表演稿包含不支持的情绪。")
             delivery = item.get("delivery", "normal")
-            if delivery not in {"normal", "whisper"}:
-                raise ProviderError("说话方式须为 normal 或 whisper。")
+            if delivery not in DELIVERIES:
+                raise ProviderError("说话方式不在支持的标签列表中。")
+            try:
+                direction = performance.validate_direction(item.get('direction', ''))
+            except ValueError as exc:
+                raise ProviderError(str(exc)) from None
             segments.append({"kind": kind, "text": text.strip(), "emotion": emotion,
                              "intensity": float(_number(item.get("intensity") if item.get("intensity") is not None else 0.5, 0, 1, "情绪强度")),
-                             "delivery": delivery, "speed": float(_number(item.get("speed", 1.0), 0.5, 2.0, "片段语速"))})
+                             "delivery": delivery, "direction": direction,
+                             "speed": float(_number(item.get("speed", 1.0), 0.5, 2.0, "片段语速"))})
         elif kind == "event":
             if item.get("event") not in EVENTS:
                 raise ProviderError("表演稿包含不支持的声音动作。")
@@ -248,7 +258,8 @@ PLAN_SCHEMA = _object_schema({
     "segments": {"type": "array", "items": {"anyOf": [
         _object_schema({"kind": {"type": "string", "enum": ["speech"]}, "text": {"type": "string"},
                         "emotion": {"type": "string", "enum": list(EMOTIONS)}, "intensity": {"type": "number"},
-                        "delivery": {"type": "string", "enum": ["normal", "whisper"]}, "speed": {"type": "number"}}),
+                        "delivery": {"type": "string", "enum": list(DELIVERIES)},
+                        "direction": {"type": "string", "maxLength": 240}, "speed": {"type": "number"}}),
         _object_schema({"kind": {"type": "string", "enum": ["event"]}, "event": {"type": "string", "enum": list(EVENTS)}}),
         _object_schema({"kind": {"type": "string", "enum": ["pause"]}, "duration_ms": {"type": "integer"}}),
     ]}}, "warnings": {"type": "array", "items": {"type": "string"}},
@@ -366,7 +377,8 @@ def _send(provider, method, path, **kwargs):
             if not loopback and isinstance(timeout, tuple):
                 # 云端隧道与跨境链路的首次握手常超过 5 秒。
                 timeout = (max(timeout[0], 20), timeout[1])
-            response = session.request(method, url, headers=_headers(provider),
+            headers = {**kwargs.pop('headers', {}), **_headers(provider)}
+            response = session.request(method, url, headers=headers,
                                        timeout=timeout, allow_redirects=False, **kwargs)
     except requests.Timeout:
         raise ProviderUnavailableError("模型请求超时，请检查服务状态后重新提交。") from None
@@ -627,6 +639,7 @@ def _run_llm_audit(
              "你是独立的语音合成前防漏读审核员。你的核心职责是防止自然语言描述语气或舞台指示时被错误当作语音念出来。只检查不改写："
              "1. 【防语气描述误读为语音（核心）】原话中要求‘这段语速快一点’‘这段用耳语’‘加个叹气’‘悲伤一点读’等自然语言语气/舞台控制说明，"
              "必须剥离到 directives 和结构字段中，绝不得残留在将要朗读的 text 或 speech.text 里；text 和 speech.text 也不能残留 [sad]、<whisper> 等内嵌标签。"
+             "speech.direction 是不朗读的表演指导，delivery 是局部投递方式；它们位于独立字段是正确的，不能因此误判为漏读。"
              "若发现语气控制说明或标签漏入朗读正文，将其填入 leaked_instructions 并设 passed=false。"
              "2. 【防 AI 助手串戏代答】确认候选稿保持说话人第一人称视角，没有把原话当成对 AI 的提问去回答。"
              "3. 【翻译语种核对】当 rules.target_language 非 original 时，核对目标语言正确且未严重漏译核心意思。"
@@ -750,7 +763,8 @@ def rewrite(provider: dict, text: str, history: list[dict], config: dict) -> dic
         "只返回符合以下 JSON Schema 的一个 JSON 对象，不要 Markdown：" + json.dumps(PLAN_SCHEMA, ensure_ascii=False) +
         "。text 必须与全部 speech.text 按顺序拼接后的内容一致；声音动作单列 event，停顿单列 pause；"
         "text 和 speech.text 保持纯台词，模型方括号和尖括号表演标签由适配器生成。每段 speech 最多4096字，pause 为1到10000毫秒整数，最多100段。"
-        "delivery 只用 normal 或 whisper；speed 是0.5到2之间的语速倍率，正常用1。"
+        "delivery 按引擎的 deliveries 白名单选择，正常用 normal；speed 是0.5到2之间的语速倍率，正常用1。"
+        "仅在引擎 direction=true 时为 speech.direction 写简短自然语言表演指导，不加括号标签或换行；其他引擎 direction 为空。"
         "把录音中的自然语言语气/舞台控制需求从朗读正文剥离，写入 directives，并落实到 emotion、delivery、speed、event、pause 字段。"
         "例如‘这段语速快一点’或‘这段用耳语’是控制需求，不得写入 text 或 speech.text。"
         "输入只有控制需求时返回空 text、空 segments 和非空 directives；"
@@ -770,7 +784,7 @@ def rewrite(provider: dict, text: str, history: list[dict], config: dict) -> dic
             "\n上述 effective_rules 是当前模型生效的语气补全规则，语法示例用于理解能力。"
             "把表演需求写入结构字段，由适配器生成模型标签；通用语音表演偏好继续有效。"
             "\n默认编排只使用该引擎支持的能力：emotions 为空时用 neutral/intensity=0，"
-            "events 为空时不主动增加声音动作，whisper=false 时默认 normal，speed=false 时默认 speed=1。"
+            "events 为空时不主动增加声音动作，delivery 从 deliveries 选择，direction=false 时指导留空，speed=false 时默认 speed=1。"
             "对非空情绪和动作列表只从对应白名单选择。若原话明确要求了当前引擎不支持的耳语、情绪或语速，"
             "仍可写入 directives 与结构字段并在 warnings 中提示，合成器会自动降级适配，无需因此设 needs_review=true。"
         )
@@ -1115,10 +1129,18 @@ def _speech(provider, text, emotion, intensity, reference, voice, delivery="norm
             raise ProviderError("Fish 模型名无效，请使用 drama-3、s2-pro、s2.1-pro、s2.1-pro-free 或 s1。")
         if not provider.get("api_key"):
             raise ProviderError("请填写 Fish Audio API 密钥。")
-        if not voice:
-            raise ProviderError("请填写 Fish 云端音色 ID，或为参考语音绑定已有云端音色。")
-        data = {"text": text, "reference_id": voice, "format": "wav", "sample_rate": 24000,
+        data = {"text": text, "format": "wav", "sample_rate": 44100,
                 "prosody": {"speed": min(2.0, max(0.5, effective_speed))}}
+        if voice:
+            data['reference_id'] = voice
+        else:
+            path, transcript = _reference_file(reference)
+            try:
+                if path.stat().st_size > 25 * 1024 * 1024:
+                    raise ProviderError('Fish 参考录音最多25 MB。')
+                data['references'] = [{'audio': path.read_bytes(), 'text': transcript}]
+            except OSError:
+                raise ProviderError('参考录音无法读取，请重新选择。') from None
         for name in ("temperature", "top_p", "latency", "chunk_length", "normalize", "max_new_tokens",
                      "repetition_penalty", "min_chunk_length", "condition_on_previous_chunks", "language"):
             if name in options:
@@ -1128,7 +1150,10 @@ def _speech(provider, text, emotion, intensity, reference, voice, delivery="norm
             data.pop("language", None)
         elif target_language != "original":
             data["language"] = target_language
-        return _decode_audio(_request(provider, "POST", "/v1/tts", json=data, cancel_check=cancel_check))
+        if voice:
+            return _decode_audio(_request(provider, "POST", "/v1/tts", json=data, cancel_check=cancel_check))
+        return _decode_audio(_request(provider, 'POST', '/v1/tts', data=msgpack.packb(data, use_bin_type=True),
+            headers={'Content-Type': 'application/msgpack'}, cancel_check=cancel_check))
     if kind == "gptsovits":
         preset = _server_voice(provider, reference)
         if preset:
@@ -1234,6 +1259,10 @@ def review_for_provider(provider: dict, plan: dict, config: dict) -> dict:
         elif segment["kind"] == "speech":
             if segment["delivery"] == "whisper" and not caps["whisper"]:
                 warnings.append("当前 TTS 不支持耳语，已自动按正常语气合成。")
+            elif segment['delivery'] not in caps['deliveries']:
+                warnings.append('当前 TTS 不支持 ' + segment['delivery'] + ' 局部表演，已自动使用正常语气。')
+            if segment['direction'] and not caps['direction']:
+                warnings.append('当前 TTS 不支持自由表演指导，已略过指导并保留纯台词。')
             if segment["emotion"] != "neutral" and segment["intensity"] > 0 and segment["emotion"] not in caps["emotions"]:
                 warnings.append("当前 TTS 不支持指定情绪标签，已自动按参考音色自然合成。")
             speed = segment["speed"] * global_speed
@@ -1292,12 +1321,17 @@ def synthesize(provider: dict, plan: dict, reference: dict | None, output_path: 
     pending_speed = 1.0
     pending_delivery = "normal"
     pending_emotion = "neutral"
+    pending_direction = ''
+    pending_chars = 0
     pending_has_speech = False
+    drama_limit = (provider.get('options') or {}).get('drama_max_chars', 42) if performance.is_drama(provider) else 0
+    if isinstance(drama_limit, bool) or not isinstance(drama_limit, int) or (drama_limit != 0 and not 15 <= drama_limit <= 300):
+        raise ProviderError('Drama3 单次台词上限须为15～300的整数，0表示关闭。')
     global_intensity = float(_number(config.get("emotion_intensity", 1), 0, 1, "情绪强度"))
     # 读音只改送给 TTS 的文本，表演稿、字幕和记录保留原词。
     lexicon = pronunciation.effective(config, provider.get("id", ""))
     def flush_tagged():
-        nonlocal pending_has_speech
+        nonlocal pending_has_speech, pending_chars
         if pending:
             if callable(cancel_check):
                 cancel_check()
@@ -1305,6 +1339,7 @@ def synthesize(provider: dict, plan: dict, reference: dict | None, output_path: 
                                  speed=pending_speed, cancel_check=cancel_check))
             pending.clear()
             pending_has_speech = False
+            pending_chars = 0
     for segment in plan["segments"]:
         # Optional callback supplied by the owning pipeline; it may raise its
         # cancellation exception before another (possibly billable) request.
@@ -1326,18 +1361,22 @@ def synthesize(provider: dict, plan: dict, reference: dict | None, output_path: 
                 continue
             emotion = segment["emotion"]
             intensity = min(segment["intensity"], global_intensity)
-            delivery = segment["delivery"] if caps["whisper"] else "normal"
+            delivery = segment["delivery"] if segment["delivery"] in caps['deliveries'] else "normal"
+            direction = segment['direction'] if caps['direction'] else ''
             speed = segment["speed"] if caps["speed"] else 1.0
             if tagged:
-                compiled = performance.compile_speech(provider, text, emotion, intensity, delivery)
-                # A new request resets delivery and emotion, preventing a whisper
-                # or sadness cue from unintentionally leaking into the next line.
-                if pending_has_speech and (pending_speed != speed or pending_delivery != delivery or pending_emotion != emotion
-                    or sum(len(p) + 1 for p in pending) + len(compiled) > 4500):
-                    flush_tagged()
-                pending_speed, pending_delivery, pending_emotion = speed, delivery, emotion
-                pending.append(compiled)
-                pending_has_speech = True
+                for chunk in performance.split_spoken_text(text, drama_limit):
+                    compiled = performance.compile_speech(provider, chunk, emotion, intensity, delivery, direction)
+                    # Each fragment inherits its director note and receives a complete scope.
+                    if pending_has_speech and (pending_speed != speed or pending_delivery != delivery or pending_emotion != emotion
+                        or pending_direction != direction or (drama_limit and pending_chars + 1 + len(chunk) > drama_limit)
+                        or sum(len(p) + 1 for p in pending) + len(compiled) > 4500):
+                        flush_tagged()
+                    pending_speed, pending_delivery, pending_emotion = speed, delivery, emotion
+                    pending_direction = direction
+                    pending.append(compiled)
+                    pending_chars += len(chunk) + int(pending_has_speech)
+                    pending_has_speech = True
             else:
                 if emotion not in caps["emotions"]:
                     emotion, intensity = "neutral", 0

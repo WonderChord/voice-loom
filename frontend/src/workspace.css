@@ -89,6 +89,8 @@ button.primary, .button.primary { font-weight: 650; border-color: transparent; b
 .output-route i { width: 6px; height: 6px; background: var(--accent-ink); border-radius: 50%; flex: none; }
 .output-route.using-backup { color: var(--accent-ink); }
 .card-in-use { display: inline-flex; gap: 3px; color: var(--accent-ink); margin-left: 5px; font-size: 11px; }
+.direction-summary { width: 100%; color: var(--muted); font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+.plan-editor .segment > .field { margin: 10px 0; }
 
 .monitor-panel {
   display: grid; grid-template-columns: minmax(0,1.9fr) minmax(260px,.85fr);

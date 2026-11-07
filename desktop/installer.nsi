@@ -10,6 +10,7 @@ SetCompressor /SOLID lzma
 !define MUI_UNICON "${APPICON}"
 !define MUI_ABORTWARNING
 !insertmacro MUI_PAGE_WELCOME
+!insertmacro MUI_PAGE_LICENSE "${PAYLOAD}\LICENSE"
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_INSTFILES
 !insertmacro MUI_PAGE_FINISH
@@ -28,7 +29,7 @@ Section "声织" MainSection
     CreateShortcut "$DESKTOP\声织.lnk" "$INSTDIR\声织.exe"
     WriteRegStr HKCU "Software\VoiceLoom" "InstallDir" "$INSTDIR"
     WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\VoiceLoom" "DisplayName" "声织 Voice Loom"
-    WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\VoiceLoom" "DisplayVersion" "1.4.1"
+    WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\VoiceLoom" "DisplayVersion" "1.5.0"
     WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\VoiceLoom" "DisplayIcon" "$INSTDIR\声织.exe"
     WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\VoiceLoom" "UninstallString" '$\"$INSTDIR\Uninstall.exe$\"'
     WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\VoiceLoom" "NoModify" 1

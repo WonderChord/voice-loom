@@ -130,7 +130,9 @@ class LocalTtsTests(unittest.TestCase):
         self.assertTrue(caps["whisper"])
         self.assertTrue(caps["reference_audio"])
         self.assertFalse(caps["speed"])
-        self.assertEqual(caps["events"], ["sigh", "laugh"])
+        self.assertTrue({'sigh', 'laugh', 'breath', 'chuckle', 'gasp'} <= set(caps['events']))
+        self.assertTrue(caps['direction'])
+        self.assertIn('soft', caps['deliveries'])
         self.assertEqual(caps["rule_profile"], "fish_drama3_local")
         plan = {"source_text": "原话", "text": "你好。", "segments": [
             {"kind": "speech", "text": "你好。", "speed": 1.2}], "warnings": []}

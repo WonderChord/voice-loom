@@ -219,6 +219,7 @@ export function PromptsPage({ config, change, save, run, notify }: Props) {
         </Field>
         <div className="row between wrap">
           <div className="chips">
+            {capability?.direction && <span className="chip active-chip">自由表演指导</span>}
             {capability?.whisper && <span className="chip active-chip">耳语</span>}
             {capability?.instructions && <span className="chip active-chip">情绪语气</span>}
             {capability?.events?.length > 0 && (
@@ -236,6 +237,7 @@ export function PromptsPage({ config, change, save, run, notify }: Props) {
             {capability.tag_spec?.whisper_tag && (
               <code>耳语标签：{capability.tag_spec.whisper_tag}</code>
             )}
+            {capability.tag_spec?.scoped_tags && <code>局部投递：{Object.keys(capability.tag_spec.scoped_tags).join(" / ")}</code>}
             {capability.tag_spec && Object.keys(capability.tag_spec.event_tags).length > 0 && (
               <code>
                 动作标签：

@@ -1,0 +1,37 @@
+Voice Loom Community License 1.0
+Apache License 2.0 with Additional Commercial Conditions
+
+Copyright 2026 WonderChord and Voice Loom contributors.
+
+The project-owned source code and its compiled distributions are licensed
+under the Apache License, Version 2.0 (reproduced in LICENSES/Apache-2.0.txt),
+subject to BOTH additional conditions below. These conditions are part of
+this license and prevail where they conflict with the Apache text.
+
+1. Multi-tenant services. Operating the Work or a derivative as a multi-tenant
+service requires prior written commercial authorization from WonderChord.
+A tenant is an independent workspace with isolated data and configuration.
+Multiple users sharing one workspace do not alone constitute multiple tenants.
+
+2. Frontend identity. Removing or altering Voice Loom's name, logo or copyright
+notices in its frontend requires prior written commercial authorization from
+WonderChord. The frontend includes frontend/ and the desktop user interface in
+desktop/. This additional condition does not apply to backend-only use.
+
+Other commercial use is permitted, subject to this license. In particular,
+personal use, single-workspace internal deployment and making finished audio
+for clients do not by themselves require separate commercial authorization.
+
+Redistribution must preserve this complete license, the Apache text and NOTICE.
+Third-party components, model weights and reference recordings retain their own
+licenses; this license does not grant rights to them. Contributions intentionally
+submitted to this project are licensed on these same terms unless separately
+agreed in writing.
+
+This is a source-available license, not the unmodified Apache-2.0 license or an
+OSI-approved open-source license. There is no claim of affiliation with Dify.
+For commercial authorization, contact the maintainer through:
+https://github.com/WonderChord/voice-loom/issues
+
+See COMMERCIAL-LICENSE.md for the Chinese explanation. This English license
+and the incorporated Apache text control in the event of inconsistency.

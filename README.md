@@ -2,6 +2,10 @@
 
 Windows 本机语音工作台：麦克风或音频文件 → 语音识别 → 整理、翻译与表演稿审核 → 语音合成 → 所选输出设备。
 
+许可采用 **Apache 2.0 + 附加商业条款（Dify 模式）**：普通商业使用允许，多租户服务或移除前端品牌须另获书面授权。完整条款见 [LICENSE](LICENSE) 和 [商业授权说明](COMMERCIAL-LICENSE.md)。这是源码可用许可，不是无附加限制的 Apache-2.0 或 OSI 认证开源许可。
+
+**1.5.0**：Drama3 新增自由表演指导、七种局部成对标签、可调短句切分与 Fish MessagePack 参考音输入。LLM 和编辑器保留纯台词，指导与声音事件单独编排。用法和实验边界见 [Drama3 编排指南](docs/DRAMA3.md)。
+
 ## 桌面版
 
 提供 Windows x64 便携 ZIP 和当前用户安装 EXE。便携版完整解压后双击 **声织.exe**；安装版通过开始菜单或桌面快捷方式打开。需要 Windows 10/11、.NET Framework 4.8 和 [Microsoft Edge WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/)。工作台核心无需另装 Python。

@@ -33,6 +33,7 @@ import {
   type TargetLanguage,
   emotionNames,
   eventNames,
+  deliveryNames,
   statusNames,
   targetLanguageNames,
   processingModeLabel,
@@ -159,12 +160,13 @@ export function EntryCard({
       </div>
       {entry.plan?.segments
         .filter(
-          (s) => s.kind === "speech" && (s.delivery === "whisper" || (s.speed && s.speed !== 1)),
+          (s) => s.kind === "speech" && (s.direction || (s.delivery && s.delivery !== "normal") || (s.speed && s.speed !== 1)),
         )
         .map((s, i) => (
           <div className="chips" key={i}>
-            {s.delivery === "whisper" && <span className="chip event">耳语</span>}
+            {s.delivery && s.delivery !== "normal" && <span className="chip event">{deliveryNames[s.delivery]}</span>}
             {s.speed && s.speed !== 1 ? <span className="chip pause">语速 {s.speed}×</span> : null}
+            {s.direction && <span className="direction-summary">表演指导（不朗读）：{s.direction}</span>}
           </div>
         ))}
       {entry.error && <div className="entry-error">{entry.error}</div>}
@@ -416,7 +418,7 @@ export function Dashboard({
             )}
             <div className="engine-note">
               <Headphones size={13} />
-              {serviceVoice ? "声音 ID：" + (voiceId || "待设置") : mappedVoice ? "已绑定服务端预置音色" : "使用参考录音的音色合成"}
+              {outputTts?.type === "fish_tts" && !voiceId && voice ? "上传当前参考录音 · Fish 零样本克隆" : serviceVoice ? "声音 ID：" + (voiceId || "待设置") : mappedVoice ? "已绑定服务端预置音色" : "使用参考录音的音色合成"}
             </div>
             <dl className="rack-readout">
               <div><dt>输出引擎</dt><dd>{outputTts?.name || "未设置"}</dd></div>

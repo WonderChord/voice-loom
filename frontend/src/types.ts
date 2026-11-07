@@ -170,6 +170,11 @@ export interface Voice {
   audio_url: string;
   provider_voice_ids: Record<string, string>;
 }
+export type Delivery = "normal" | "whisper" | "soft" | "emphasis" | "stress" | "forceful" | "slow" | "fast";
+export const deliveryNames: Record<Delivery, string> = {
+  normal: "正常说话", whisper: "耳语", soft: "轻柔放软", emphasis: "突出重点",
+  stress: "字词重音", forceful: "用力笃定", slow: "局部放慢", fast: "局部加快",
+};
 export interface Segment {
   kind: "speech" | "event" | "pause";
   text?: string;
@@ -177,7 +182,8 @@ export interface Segment {
   intensity?: number;
   event?: string;
   duration_ms?: number;
-  delivery?: "normal" | "whisper";
+  delivery?: Delivery;
+  direction?: string;
   speed?: number;
 }
 export interface Plan {
@@ -198,6 +204,7 @@ export interface TagSpec {
   pause_syntax: string;
   speed_range: [number, number] | null;
   plan_usage: string;
+  scoped_tags?: Record<string, string>;
 }
 export interface Capabilities {
   emotions: string[];
@@ -207,6 +214,8 @@ export interface Capabilities {
   reference_audio: boolean;
   instructions: boolean;
   notes: string[];
+  direction?: boolean;
+  deliveries?: Delivery[];
   rule_profile: string;
   rule_title: string;
   rule_key: string;
@@ -277,6 +286,8 @@ export const eventNames: Record<string, string> = {
   sigh: "轻叹气",
   laugh: "轻笑",
   breath: "呼吸",
+  chuckle: "低声轻笑", giggle: "小声笑", gasp: "惊呼", pant: "急促呼吸",
+  shaky_breath: "颤抖呼吸", yawn: "哈欠", groan: "低哼",
 };
 export const statusNames: Record<string, string> = {
   queued: "排队中",

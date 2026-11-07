@@ -180,7 +180,7 @@ class ProviderTests(unittest.TestCase):
         self.assertEqual(body["text"], "[sighs] [sad] <whisper>我会回来的。</whisper>")
         self.assertEqual(body["prosody"]["speed"], 0.8)
         self.assertEqual(body["format"], "wav")
-        self.assertEqual(body["sample_rate"], 24000)
+        self.assertEqual(body["sample_rate"], 44100)
         self.assertNotIn("这段用耳语", body["text"])
         self.assertEqual(request.call_args_list[1].kwargs["json"]["text"], "我们明天见。")
 

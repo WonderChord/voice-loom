@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from . import hotkeys as hotkey_keys
 from .language import TargetLanguage
+from .performance import validate_direction
 
 
 class Model(BaseModel):
@@ -53,6 +54,10 @@ class Provider(Model):
         kinds = {"qwen_local": "asr", "sensevoice": "asr", "openai_asr": "asr", "openai_llm": "llm", "breeze": "tts", "elevenlabs": "tts", "openai_tts": "tts", "gptsovits": "tts", "fish_tts": "tts", "drama3_local": "tts"}
         if kinds[self.type] != self.kind:
             raise ValueError("适配器类型与 ASR/LLM/TTS 分类不符")
+        limit = self.options.get('drama_max_chars', 42)
+        if self.type in {'fish_tts', 'drama3_local'} and (isinstance(limit, bool) or not isinstance(limit, int)
+                or (limit != 0 and not 15 <= limit <= 300)):
+            raise ValueError('Drama3 单次台词上限须为15～300的整数，0表示关闭。')
         return self
 
 
@@ -294,17 +299,23 @@ class Segment(Model):
     text: str | None = Field(default=None, max_length=12000)
     emotion: Literal["neutral", "happy", "sad", "angry", "calm", "thoughtful", "excited"] | None = None
     intensity: float | None = Field(default=None, ge=0, le=1)
-    event: Literal["sigh", "laugh", "breath"] | None = None
+    event: Literal["sigh", "laugh", "breath", "chuckle", "giggle", "gasp", "pant", "shaky_breath", "yawn", "groan"] | None = None
     duration_ms: int | None = Field(default=None, ge=0, le=10000)
-    delivery: Literal["normal", "whisper"] = "normal"
+    delivery: Literal["normal", "whisper", "soft", "emphasis", "stress", "forceful", "slow", "fast"] = "normal"
+    direction: str = Field(default="", max_length=240)
     speed: float = Field(default=1, ge=0.5, le=2)
+
+    @field_validator('direction')
+    @classmethod
+    def plain_direction(cls, value):
+        return validate_direction(value)
 
     @model_validator(mode="after")
     def required_content(self):
         if self.kind == "speech" and not (self.text or "").strip():
             raise ValueError("语音段文字不能为空")
         if self.kind == "event" and not self.event:
-            raise ValueError("声音事件须选择 sigh/laugh/breath")
+            raise ValueError("声音事件须选择有效的动作")
         if self.kind == "pause" and (self.duration_ms is None or self.duration_ms < 1):
             raise ValueError("停顿时长须大于 0")
         return self

@@ -1,0 +1,10 @@
+Voice Loom / 声织
+Copyright 2026 WonderChord and Voice Loom contributors.
+
+Project-owned code uses Voice Loom Community License 1.0:
+Apache License 2.0 with additional multi-tenant and frontend identity conditions.
+Read LICENSE together with LICENSES/Apache-2.0.txt.
+
+Bundled third-party software retains its own license and notices in licenses/.
+AI model weights, external services and voice recordings are not licensed by
+this project. Voice Loom is not affiliated with Dify or Fish Audio.

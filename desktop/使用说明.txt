@@ -1,4 +1,4 @@
-声织 Voice Loom 1.4.1 · Windows x64
+声织 Voice Loom 1.5.0 · Windows x64
 
 双击「声织.exe」打开工作台。便携版请完整解压 ZIP 后运行。
 系统要求：Windows 10/11 x64、.NET Framework 4.8、Microsoft Edge WebView2 Evergreen Runtime。
@@ -48,3 +48,9 @@ AI 助手可预览、识别、生成文件、查询记录与模型服务；播�
 诊断
 「更多工具 → 诊断日志」打开日志目录。启动端口被占用时关闭旧声织后台，或修改 desktop.json 的 port。
 首次运行如果 Windows 显示发布者未知，原因是当前构建没有代码签名证书。
+
+Drama3 表演
+在编辑编排中将指导写入「表演指导（不朗读）」，局部耳语、放软、重音、快慢用说话方式选择。默认42字符分句可在模型连接调整；已有自定义规则需点击「恢复模型默认规则」才会使用新版模板。Fish 无音色 ID 时可上传当前参考录音及准确台词。
+
+许可
+自有代码采用 Apache 2.0 + 附加商业条款：普通商业使用允许，多租户服务或移除前端品牌须另获书面授权。完整条款见程序旁 LICENSE、NOTICE、COMMERCIAL-LICENSE.md 与 licenses/Apache-2.0.txt。第三方组件和模型继续适用各自许可。

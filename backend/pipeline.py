@@ -89,7 +89,13 @@ def validate_listening_config(config: dict, reference: dict | None) -> None:
             mappings = (reference or {}).get("provider_voice_ids") or {}
             voice = mappings.get(provider["id"]) or mappings.get(kind) or provider.get("voice")
             if not str(voice or "").strip():
-                raise ListeningSetupIssue(f"{label} 缺少声音 ID，请在模型连接中填写，或在参考音色中绑定。", provider_id)
+                if kind == 'fish_tts':
+                    if not Path((reference or {}).get('path') or '').is_file():
+                        raise ListeningSetupIssue(f'{label} 需要云端音色 ID 或本地参考录音。', provider_id, 'voices')
+                    if not str((reference or {}).get('transcript') or '').strip():
+                        raise ListeningSetupIssue('Fish 本地参考录音需要准确的对应台词。', provider_id, 'voices')
+                else:
+                    raise ListeningSetupIssue(f"{label} 缺少声音 ID，请在模型连接中填写，或在参考音色中绑定。", provider_id)
         if kind in {"breeze", "gptsovits", "drama3_local"}:
             mappings = (reference or {}).get("provider_voice_ids") or {}
             preset = str(mappings.get(provider["id"]) or mappings.get(kind) or "").strip()

@@ -30,6 +30,7 @@ import {
   type Entry,
   type Kind,
   statusNames,
+  eventNames,
 } from "./types";
 import { Field, Toggle, Modal, AudioPreview } from "./components";
 import { EntryCard } from "./Dashboard";
@@ -683,7 +684,7 @@ export function ModelsPage({
           {kind === "tts" && (
             <>
               {!["breeze", "gptsovits", "drama3_local"].includes(provider.type) && (
-                <Field label="云端音色 ID / Voice" note="云端 TTS 使用服务上的音色 ID。">
+                <Field label="云端音色 ID / Voice" note={provider.type === "fish_tts" ? "有 ID 时优先使用；留空且未绑定 ID 时，上传当前参考音色和准确台词作零样本克隆。" : "云端 TTS 使用服务上的音色 ID。"}>
                   <input
                     value={provider.voice}
                     onChange={(e) => set({ voice: e.target.value })}
@@ -701,6 +702,13 @@ export function ModelsPage({
                   value={provider.instructions}
                   onChange={(instructions) => set({ instructions })}
                 />
+              )}
+              {(provider.type === "drama3_local" || (provider.type === "fish_tts" && (!provider.model.trim() || provider.model.trim() === "drama-3"))) && (
+                <Field label="Drama3 单次台词上限（字符）" note="默认42适合中文/日文短句；15～300可调，英语可调大，0关闭。先分句再加标签，会增加请求次数。">
+                  <input type="number" min="0" max="300" step="1" aria-label="Drama3 单次台词上限"
+                    value={Number(provider.options.drama_max_chars ?? 42)}
+                    onChange={(e) => set({ options: { ...provider.options, drama_max_chars: +e.target.value } })} />
+                </Field>
               )}
               <Capabilities providerId={provider.id} refreshKey={config} />
             </>
@@ -797,7 +805,7 @@ export function Capabilities({
         <span className="chip">{caps.reference_audio ? "参考音频" : "云端音色 ID"}</span>
         {caps.events?.map((e) => (
           <span className="chip event" key={e}>
-            {({ sigh: "叹气", laugh: "轻笑", breath: "呼吸" } as Record<string, string>)[e] || e}
+            {eventNames[e] || e}
           </span>
         ))}
       </div>

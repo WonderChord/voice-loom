@@ -7,6 +7,8 @@ import {
   type Capabilities,
   emotionNames,
   eventNames,
+  deliveryNames,
+  type Delivery,
 } from "./types";
 export function Field({
   label,
@@ -188,6 +190,13 @@ export function PlanEditor({
                 value={s.text || ""}
                 onChange={(e) => set(i, { text: e.target.value })}
               />
+              {(caps?.direction || s.direction) && (
+                <Field label="表演指导（不朗读）" note={caps?.direction ? "写声线、神态、距离或语气目的；无需写括号标签。" : "当前模型会略过这段指导，只合成台词。"}>
+                  <input aria-label={`第${i + 1}段表演指导`} maxLength={240}
+                    value={s.direction || ""} placeholder="例如：压低声音，像对老朋友说一个秘密"
+                    onChange={(e) => set(i, { direction: e.target.value })} />
+                </Field>
+              )}
               <div className="row wrap">
                 <select
                   aria-label={`第${i + 1}段情绪`}
@@ -213,13 +222,13 @@ export function PlanEditor({
                   aria-label={`第${i + 1}段说话方式`}
                   value={s.delivery || "normal"}
                   onChange={(e) =>
-                    set(i, { delivery: e.target.value as "normal" | "whisper" })
+                    set(i, { delivery: e.target.value as Delivery })
                   }
                 >
-                  <option value="normal">正常说话</option>
-                  <option value="whisper" disabled={!!caps && !caps.whisper}>
-                    耳语{caps && !caps.whisper ? "（模型未支持）" : ""}
-                  </option>
+                  {(Object.entries(deliveryNames) as [Delivery, string][]).map(([key, label]) => {
+                    const supported = !caps || (caps.deliveries || (caps.whisper ? ["normal", "whisper"] : ["normal"])).includes(key);
+                    return <option key={key} value={key} disabled={!supported}>{label}{supported ? "" : "（模型未支持）"}</option>;
+                  })}
                 </select>
                 <label className="inline-range">
                   强度

@@ -6,6 +6,25 @@ the syntax consumed by a particular synthesis model.
 from __future__ import annotations
 
 import copy
+import re
+import unicodedata
+
+DRAMA_DELIVERIES = ('whisper', 'soft', 'emphasis', 'stress', 'forceful', 'slow', 'fast')
+DRAMA_EVENTS = {'sigh': '[sighs]', 'laugh': '[laughs]', 'breath': '[breath]',
+                'chuckle': '[chuckling]', 'giggle': '[small laugh]', 'gasp': '[gasps]',
+                'pant': '[panting]', 'shaky_breath': '[shaky breath]',
+                'yawn': '[yawning]', 'groan': '[groaning]'}
+DRAMA_RULES = (
+    '按角色、说话对象和当前语境讲戏，不要只堆 happy/sad 标签。三层表演分别表达：'
+    '①每段 speech.direction 用一句简短自然语言描述声线/吐息、神态、距离和语气目的，指导语言可与台词不同；'
+    '②点状呼吸、轻笑、叹气等单列 event，停顿单列 pause；'
+    '③局部词句单独拆为 speech 并设置 delivery=whisper/soft/emphasis/stress/forceful/slow/fast，'
+    '适配器为该段生成成对尖括号，段外恢复正常。direction 无需写方括号；不得混入台词或手写模型标签。'
+    '没有特别表演时 direction 为空、delivery=normal。中文/日文优先一到两个短分句，约15～38字，'
+    '超长台词由适配器按可调上限分句并继承指导；不要删减事实来凑字数。'
+    '情绪或对象改变时另起一段，不堆互相矛盾的演技。拟声词仅保留台词里已有的，不为加强音效凭空加词。'
+    'text 和 speech.text 只放实际朗读内容，字幕与读音词典不含导演说明。'
+)
 
 FISH_MODELS = {"drama-3", "s2-pro", "s2.1-pro", "s2.1-pro-free", "s1"}
 ELEVEN_TAG_MODELS = {"eleven_v3", "eleven_v4", "eleven_v4_turbo"}
@@ -13,8 +32,8 @@ ELEVEN_TAG_MODELS = {"eleven_v3", "eleven_v4", "eleven_v4_turbo"}
 PROFILES = {
     "fish_drama3": {
         "title": "Fish Drama3 · 局部表演标签",
-        "rules": "按台词的情绪张力与戏剧感自然编排情绪和声音动作。局部耳语拆为独立 speech 片段并设置 delivery=whisper，适配器会用成对 <whisper>…</whisper> 限定该片段。情绪写入 emotion/intensity，叹气、笑声、呼吸单列 event；适配器会转换为方括号方向。停顿单列 pause，速度写入 speed。text 和 speech.text 保持纯台词。",
-        "examples": ["delivery=whisper → <whisper>这句话轻声说。</whisper>", "emotion=sad → [sad] 我想再试一次。", "event=sigh → [sighs]"],
+        "rules": DRAMA_RULES + '整段的数值语速仍使用 speed。',
+        "examples": ["direction=压低声音，像对老朋友说一个秘密 → [压低声音，像对老朋友说一个秘密]", "delivery=whisper → <whisper>这句话轻声说。</whisper>", "delivery=soft → <soft>谢谢你。</soft>", "event=chuckle → [chuckling]"],
     },
     "fish_s2": {
         "title": "Fish S2 · 方括号表演标签",
@@ -23,7 +42,7 @@ PROFILES = {
     },
     "fish_drama3_local": {
         "title": "本地 Drama3 · 局部表演标签",
-        "rules": "按台词的情绪张力自然编排情绪与声音动作。局部耳语拆为独立 speech 片段并设置 delivery=whisper，适配器用成对 <whisper>…</whisper> 限定该片段。情绪写入 emotion/intensity，叹气和笑声单列 event，停顿单列 pause。当前本地实现使用默认语速，speed 保持 1；text 和 speech.text 保持纯台词。",
+        "rules": DRAMA_RULES + '本地接口不提供数值变速，speed 保持1；局部快慢用 delivery=fast/slow。',
         "examples": ["delivery=whisper → <whisper>这句话轻声说。</whisper>", "emotion=sad → [sad] 我想再试一次。", "event=sigh → [sighs]"],
     },
     "eleven_audio_tags": {
@@ -71,19 +90,21 @@ TAG_SPECS = {
         "mechanism": "inline_tags",
         "whisper_tag": "<whisper>{text}</whisper>",
         "emotion_tags": dict(_INLINE_EMOTION_TAGS),
-        "event_tags": {"sigh": "[sighs]", "laugh": "[laughs]", "breath": "[breath]"},
+        "event_tags": dict(DRAMA_EVENTS),
         "pause_syntax": "{\"kind\": \"pause\", \"duration_ms\": 1..10000}",
         "speed_range": [0.5, 2.0],
-        "plan_usage": "在 plan.segments 中保持 speech.text 为纯台词，使用 delivery='whisper'、emotion、kind='event' 结构字段声明；适配器会自动编译为 <whisper>…</whisper>、[sad]、[sighs] 等 Drama 3 原生标签。",
+        "plan_usage": "speech.direction 放不朗读的自由表演指导；speech.delivery 选择局部成对标签；kind=event 声明点状声音。先拆纯台词，再生成闭合标签。",
+        "scoped_tags": {tag: '<' + tag + '>{text}</' + tag + '>' for tag in DRAMA_DELIVERIES},
     },
     "fish_drama3_local": {
         "mechanism": "inline_tags",
         "whisper_tag": "<whisper>{text}</whisper>",
         "emotion_tags": dict(_INLINE_EMOTION_TAGS),
-        "event_tags": {"sigh": "[sighs]", "laugh": "[laughs]"},
+        "event_tags": dict(DRAMA_EVENTS),
         "pause_syntax": "{\"kind\": \"pause\", \"duration_ms\": 1..10000}",
         "speed_range": None,
-        "plan_usage": "在 plan.segments 中保持 speech.text 为纯台词，使用 delivery='whisper'、emotion、kind='event' 结构字段声明；本地适配器自动编译为 <whisper>…</whisper>、[sad]、[sighs]、[laughs] 原生标签。",
+        "plan_usage": "speech.direction 放自由表演指导；speech.delivery 选择局部成对标签；event 声明点状动作。speed 保持1，局部快慢用 delivery=fast/slow。",
+        "scoped_tags": {tag: '<' + tag + '>{text}</' + tag + '>' for tag in DRAMA_DELIVERIES},
     },
     "fish_s2": {
         "mechanism": "inline_tags",
@@ -181,22 +202,57 @@ def is_tagged(provider: dict) -> bool:
     return profile_id(provider) in {"fish_drama3", "fish_drama3_local", "fish_s2", "eleven_audio_tags"}
 
 
-def compile_speech(provider: dict, text: str, emotion: str, intensity: float, delivery: str) -> str:
+def is_drama(provider: dict) -> bool:
+    return profile_id(provider) in {'fish_drama3', 'fish_drama3_local'}
+
+
+def validate_direction(value) -> str:
+    if not isinstance(value, str) or len(value) > 240 or re.search(r'[\[\]<>\r\n]', value):
+        raise ValueError('表演指导须为不含括号标签和换行的自然语言，最多240字。')
+    return value.strip()
+
+
+def split_spoken_text(text: str, limit: int) -> list[str]:
+    """Split untagged dialogue, preserving every character; compile scopes afterwards."""
+    if not limit or len(text) <= limit:
+        return [text]
+    result = []
+    while len(text) > limit:
+        floor = max(1, limit // 3)
+        ends = [m.end() for m in re.finditer(r'[。！？!?；;，,、♪♥](?:[」』”’])?|\.(?=\s)|\s+', text[:limit])
+                if m.end() >= floor]
+        cut = ends[-1] if ends else limit
+        # Keep a combining mark / variation selector attached to its base.
+        while cut > 1 and (unicodedata.combining(text[cut]) or text[cut] in '\ufe0f\u200d' or text[cut-1] == '\u200d'):
+            cut -= 1
+        result.append(text[:cut])
+        text = text[cut:]
+    if text:
+        result.append(text)
+    return result
+
+
+def compile_speech(provider: dict, text: str, emotion: str, intensity: float, delivery: str, direction: str = '') -> str:
     profile = profile_id(provider)
     if not is_tagged(provider):
         return text
     prefix = f"[{emotion}] " if emotion != "neutral" and intensity > 0 else ""
+    if is_drama(provider):
+        direction = validate_direction(direction)
+        if direction:
+            prefix = '[' + direction + '] '
+        if delivery in DRAMA_DELIVERIES:
+            return prefix + '<' + delivery + '>' + text + '</' + delivery + '>'
+        return prefix + text
     if delivery == "whisper":
-        if profile in {"fish_drama3", "fish_drama3_local"}:
-            return prefix + "<whisper>" + text + "</whisper>"
         prefix += "[whispers] " if profile == "eleven_audio_tags" else "[whispering] "
     return prefix + text
 
 
 def compile_event(provider: dict, event: str) -> str:
     mappings = {
-        "fish_drama3": {"sigh": "[sighs]", "laugh": "[laughs]", "breath": "[breath]"},
-        "fish_drama3_local": {"sigh": "[sighs]", "laugh": "[laughs]"},
+        "fish_drama3": DRAMA_EVENTS,
+        "fish_drama3_local": DRAMA_EVENTS,
         "fish_s2": {"sigh": "[sighing]", "laugh": "[laughing]"},
         "eleven_audio_tags": {"sigh": "[sighs]", "laugh": "[laughs]", "breath": "[exhales]"},
     }

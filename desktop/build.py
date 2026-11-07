@@ -15,7 +15,7 @@ import requests
 
 ROOT = Path(__file__).resolve().parents[1]
 DESKTOP = ROOT / 'desktop'
-VERSION = '1.4.1'
+VERSION = '1.5.0'
 FLAGS = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
 SDK_VERSION = '1.0.4258.31'
 SDK_URL = f'https://api.nuget.org/v3-flatcontainer/microsoft.web.webview2/{SDK_VERSION}/microsoft.web.webview2.{SDK_VERSION}.nupkg'
@@ -93,6 +93,9 @@ def license_bundle(payload, sdk):
     components = []
     notices = payload/'licenses'
     notices.mkdir()
+    for name in ('LICENSE', 'NOTICE', 'COMMERCIAL-LICENSE.md'):
+        shutil.copy2(ROOT/name, payload/name)
+    shutil.copy2(ROOT/'LICENSES/Apache-2.0.txt', notices/'Apache-2.0.txt')
     for name, distribution in sorted(distributions.items()):
         entry = {'name': name, 'version': distribution.version,
                  'license': distribution.metadata.get('License-Expression') or distribution.metadata.get('License', ''),
